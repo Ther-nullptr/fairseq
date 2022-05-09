@@ -106,6 +106,10 @@ class RandomProjectionConfig(Wav2Vec2Config):
         default=8, 
         metadata={"help": "num encoder attention heads"}
     )
+    mask_length: int = field(default=20, metadata={"help": "mask length"})
+    mask_prob: float = field(
+        default=0.1, metadata={"help": "probability of replacing a token with mask"}
+    )
 
 
 @register_model("random_projection",dataclass = RandomProjectionConfig)

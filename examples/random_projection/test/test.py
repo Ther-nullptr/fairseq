@@ -99,7 +99,6 @@ with torch.no_grad():
     print('norm2:', norm2.shape)
     labels = torch.argmin(norm2, dim=-1)
     print('labels:', labels.shape)
-    # print(labels)
 
 criterion = torch.nn.CrossEntropyLoss()
 loss = criterion(final,labels)
