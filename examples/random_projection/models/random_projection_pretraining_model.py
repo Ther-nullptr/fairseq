@@ -56,44 +56,48 @@ class RandomProjectionConfig(Wav2Vec2Config):
     conv_feature_layers: str = field(
         default="[(512, 10, 5)] + [(512, 3, 2)] * 4 + [(512,2,2)] + [(512,2,2)]",
         metadata={
-            "the conv shape [(dim,kernel_size,stride)]"
+            "help": "the conv shape [(dim,kernel_size,stride)]"
         }
     )
     encoder_embed_dim: int =field(
         default = 1024,
         metadata={
-            "input embedding dimenson of the conformer"
+            "help": "input embedding dimenson of the conformer"
         }
     )
-    encoder_ffn_embed_dim: int = field( # I can not find it in the paper...# maybe should use conformer paper
-        default = 1024,
+    encoder_ffn_embed_dim: int = field( # I can not find it in the random projection paper... but in conformer paper, the dimension is 4 times of encoder_embed_dim
+        default = 4096,
         metadata= {
-            "FFN layer dimension"
+            "help": "FFN layer dimension"
         }
     )
     dropout_ratio: float = field(
         default = 0.0,
         metadata={
-            "dropout ratio"
+            "help": "dropout ratio"
         } 
     )
     batch_size: int = field(
         default = 2048,
         metadata= {
-            "batch size(fixed??)"
+            "help": "batch size(fixed??)"
         }
     )
     encoder_layers: int = field(
         default = 24,
         metadata = {
-            "encoder layers of conformer"
+            "help": "encoder layers of conformer"
         }
     )
     encoder_depthwise_conv_kernel_size: int = field(
         default = 5,
         metadata = {
-            "encoder depthwise conv kernel size"
+            "help": "encoder depthwise conv kernel size"
         }
+    )
+    encoder_attention_heads: int = field(
+        default=8, 
+        metadata={"help": "num encoder attention heads"}
     )
 
 

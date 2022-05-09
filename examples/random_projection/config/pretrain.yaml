@@ -5,7 +5,7 @@ common:
   log_format: json
   log_interval: 200
   tensorboard_logdir: tb
-  wandb-project: wandb
+  wandb_project: wandb
 
 checkpoint:
   save_interval_updates: 25000
@@ -20,17 +20,15 @@ task:
   normalize: false
 
 dataset:
-  num_workers: 6
+  num_workers: 0
   max_tokens: 1400000
   skip_invalid_size_inputs_valid_test: true
 
 distributed_training:
-  distributed_world_size: 0 # use 8 or 16 in pcl
-  ddp_backend: legacy_ddp
+  distributed_world_size: 8 # use 8 or 16 in pcl
 
 criterion:
   _name: model
-  infonce: true
   log_keys: 
     - target_var
     - pred_var
