@@ -1,422 +1,106 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
-#
-# This source code is licensed under the MIT license found in the
-# LICENSE file in the root directory of this source tree.
-
-import math
-from dataclasses import dataclass, field
-from typing import Optional
-
+import soundfile as sf
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.distributed as dist
-from torch.nn.init import xavier_uniform_, xavier_normal_
-
-from fairseq.models import register_model, BaseFairseqModel
-from fairseq.dataclass import FairseqDataclass, ChoiceEnum
-from fairseq.models.wav2vec.wav2vec2 import *
+import numpy as np
+from torch import layer_norm
+from fairseq.modules import conformer_layer
+from fairseq.data.audio.feature_transforms.specaugment import SpecAugmentTransform
 from fairseq.modules.conformer_layer import ConformerEncoderLayer
+import wave
 
-EXTRACTOR_MODE_CHOICES = ChoiceEnum(["default", "layer_norm"])
-MASKING_DISTRIBUTION_CHOICES = ChoiceEnum(["static", "uniform", "normal", "poisson"])
-LAYER_TYPE_CHOICES = ChoiceEnum(["transformer", "conformer"])
+from fairseq.models.wav2vec.wav2vec2 import ConvFeatureExtractionModel
 
-@dataclass
-class RandomProjectionConfig(Wav2Vec2Config):
-    loss_scale: Optional[float] = field(
-        default=None,
-        metadata={
-            "help": "scale the reconstruction loss by this constant. if None then scales by 1/sqrt(dim)"
-        },
-    )
-    xavier_type: str = field(
-        default="normal",
-        metadata={
-            "help": "xavier init type. options: uniform, normal"
-        },
-    )
-    fbank_dim: int = field(
-        default=80,
-        metadata={
-            "help": "fbank dim"
-        },
-    )
-    fbank_shift: int= field(
-        default=10,
-        metadata={
-            "help": "fbank shift stride"
-        },
-    )
-    codebook_vocab_size: int = field(
-        default= 8192,
-        metadata={
-            "help": "the vocab_size of codebook"
-        }
-    )
-    codebook_dim: int = field(
-        default= 16,
-        metadata={
-            "help": "the dim of codebook"
-        }
-    )
-    conv_feature_layers: str = field(
-        default="[(512, 10, 5)] + [(512, 3, 2)] * 4 + [(512,2,2)] + [(512,2,2)]",
-        metadata={
-            "help": "the conv shape [(dim,kernel_size,stride)]"
-        }
-    )
-    encoder_embed_dim: int =field(
-        default = 1024,
-        metadata={
-            "help": "input embedding dimenson of the conformer"
-        }
-    )
-    encoder_ffn_embed_dim: int = field( # I can not find it in the random projection paper... but in conformer paper, the dimension is 4 times of encoder_embed_dim
-        default = 4096,
-        metadata= {
-            "help": "FFN layer dimension"
-        }
-    )
-    dropout_ratio: float = field(
-        default = 0.0,
-        metadata={
-            "help": "dropout ratio"
-        } 
-    )
-    batch_size: int = field(
-        default = 2048,
-        metadata= {
-            "help": "batch size(fixed??)"
-        }
-    )
-    encoder_layers: int = field(
-        default = 24,
-        metadata = {
-            "help": "encoder layers of conformer"
-        }
-    )
-    encoder_depthwise_conv_kernel_size: int = field(
-        default = 5,
-        metadata = {
-            "help": "encoder depthwise conv kernel size"
-        }
-    )
-    encoder_attention_heads: int = field(
-        default=8, 
-        metadata={"help": "num encoder attention heads"}
-    )
+#from ..models.conformer import Conformer
 
 
-@register_model("random_projection",dataclass = RandomProjectionConfig)
-class RandomProjectionModel(BaseFairseqModel):
-    def __init__(self, cfg:RandomProjectionConfig):
-        super().__init__()
-        self.cfg = cfg
+# input data
+input_data, _ = sf.read(
+    '/home/nullptr/open-source/fairseq/examples/random_projection/test/3607-135982-0000.flac'
+)
+input_data = torch.Tensor(input_data).unsqueeze(0)
+print('raw input data:', input_data.shape)
 
-        # conv_layer
-        self.feature_enc_layers = eval(cfg.conv_feature_layers) # In the paper, there are 2 conv layers
+x = torch.cat([input_data,input_data,input_data],dim=0)
+print('batch input data:',x.shape) # [3, 108160]
 
-        # dimension settings
-        self.extractor_embed = self.feature_enc_layers[-1][0] # default: 512
-        self.embedding_dim = cfg.encoder_embed_dim # input embedding dimenson of the conformer
-        self.encoder_ffn_embed_dim = cfg.encoder_ffn_embed_dim # FFN layer dimension
-        self.fbank_dim = cfg.fbank_dim # default: 80
-        self.fbank_shift = cfg.fbank_shift # default: 10
-        self.codebook_vocab_size = cfg.codebook_vocab_size # default: 8192
-        self.codebook_dim = cfg.codebook_dim # default: 16
-        self.dropout_ratio = cfg.dropout_ratio # default: 0.1
-        self.feature_grad_mult = cfg.feature_grad_mult # default: 1.0
+# feature extract
 
-        # google usually use fbank, we use conv_feature extractor instead
-        self.feature_extractor = ConvFeatureExtractionModel(
-            conv_layers=self.feature_enc_layers,
-            dropout=0.0,
-            mode=cfg.extractor_mode,
-            conv_bias=cfg.conv_bias,
-        )
-        self.post_extract_proj = nn.Linear(self.extractor_embed, cfg.encoder_embed_dim)
+feature_enc_layers = eval("[(512, 10, 5)] + [(512, 3, 2)] * 4 + [(512,2,2)] + [(512,2,2)]")
+extractor_embed = feature_enc_layers[-1][0]
 
-        # mask settings
-        self.mask_prob = cfg.mask_prob
-        self.mask_selection = cfg.mask_selection
-        self.mask_other = cfg.mask_other
-        self.mask_length = cfg.mask_length
-        self.no_mask_overlap = cfg.no_mask_overlap
-        self.mask_min_space = cfg.mask_min_space
-        self.mask_emb = nn.Parameter(
-            torch.FloatTensor(cfg.encoder_embed_dim).uniform_()
-        )
+feature_extractor = ConvFeatureExtractionModel(
+    conv_layers=feature_enc_layers,
+    dropout=0.0,
+    mode="default",
+    conv_bias=False,
+)
 
-        # mask prob settings
-        self.mask_channel_prob = cfg.mask_channel_prob
-        self.mask_channel_before = cfg.mask_channel_before
-        self.mask_channel_selection = cfg.mask_channel_selection
-        self.mask_channel_other = cfg.mask_channel_other
-        self.mask_channel_length = cfg.mask_channel_length
-        self.no_mask_channel_overlap = cfg.no_mask_channel_overlap
-        self.mask_channel_min_space = cfg.mask_channel_min_space
+features = feature_extractor(x)
+print('feature data:', features.shape) # [3, 512, 337]
 
-        # dropout & layernorm
-        self.dropout_input = nn.Dropout(cfg.dropout_input) # TODO
-        self.layer_norm = nn.LayerNorm(self.extractor_embed)
-        
-        # conformer
-        self.tgt_layer = cfg.encoder_layers
-        self.encoder = nn.ModuleList(
-            [ConformerEncoderLayer(
-                embed_dim=self.embedding_dim,
-                ffn_embed_dim=cfg.encoder_ffn_embed_dim,
-                attention_heads=cfg.encoder_attention_heads,
-                dropout=cfg.dropout,
-                use_fp16=True,
-                depthwise_conv_kernel_size=cfg.encoder_depthwise_conv_kernel_size,
-            ) for _ in range(cfg.encoder_layers)]
-        )
-        self.final_proj = nn.Linear(in_features=cfg.encoder_embed_dim, out_features=cfg.codebook_vocab_size)
+features = features.transpose(1, 2)
+layer_norm = torch.nn.LayerNorm(extractor_embed)
+features = layer_norm(features)
 
-        # random projection
-        self.random_proj = nn.Parameter(torch.empty(self.extractor_embed, self.codebook_dim), requires_grad=False)
-        self.codebook = nn.Parameter(torch.empty(self.codebook_vocab_size, self.codebook_dim), requires_grad=False)
-        if(cfg.xavier_type == "normal"):
-            self.random_proj = xavier_normal_(self.random_proj)
-            self.codebook = xavier_normal_(self.codebook)
-        elif(cfg.xavier_type == "uniform"):
-            self.random_proj = xavier_uniform_(self.random_proj)
-            self.codebook = xavier_uniform_(self.codebook)
-        else:
-            raise Exception(
-                f"{cfg.xavier_type} is incorrect. Optional xavier types: normal, uniform"
-            )
-        # loss
-        self.criterion = nn.CrossEntropyLoss(reduction="mean")
-        self.loss_scale = cfg.loss_scale
-        
-        
+unmasked_features = features.clone()
 
-    @classmethod
-    def build_model(cls, cfg:RandomProjectionConfig,task=None):
-        return cls(cfg)
+post_proj = torch.nn.Linear(extractor_embed, 768)
+x = post_proj(features)
 
-    # some special function for random_projection
-    @staticmethod
-    def compute_var(y):
-        y = y.view(-1, y.size(-1))
-        if dist.is_initialized():
-            zc = torch.tensor(y.size(0)).cuda()
-            zs = y.sum(dim=0)
-            zss = (y ** 2).sum(dim=0)
-
-            dist.all_reduce(zc)
-            dist.all_reduce(zs)
-            dist.all_reduce(zss)
-
-            var = zss / (zc - 1) - (zs ** 2) / (zc * (zc - 1))
-            return torch.sqrt(var + 1e-6).mean()
-        else:
-            return torch.sqrt(y.var(dim=0) + 1e-6).mean()
-
-    # the function is same as data2vec
-    def apply_mask(
-        self,
-        x,
-        padding_mask,
-        mask_indices=None,
-        mask_channel_indices=None,
-    ):
-        B, T, C = x.shape
-
-        if self.mask_channel_prob > 0 and self.mask_channel_before:
-            mask_channel_indices = compute_mask_indices(
-                (B, C),
-                None,
-                self.mask_channel_prob,
-                self.mask_channel_length,
-                self.mask_channel_selection,
-                self.mask_channel_other,
-                no_overlap=self.no_mask_channel_overlap,
-                min_space=self.mask_channel_min_space,
-            )
-            mask_channel_indices = (
-                torch.from_numpy(mask_channel_indices)
-                .to(x.device)
-                .unsqueeze(1)
-                .expand(-1, T, -1)
-            )
-            x[mask_channel_indices] = 0
-
-        if self.mask_prob > 0:
-            if mask_indices is None:
-                mask_indices = compute_mask_indices(
-                    (B, T),
-                    padding_mask,
-                    self.mask_prob,
-                    self.mask_length,
-                    self.mask_selection,
-                    self.mask_other,
-                    min_masks=1,
-                    no_overlap=self.no_mask_overlap,
-                    min_space=self.mask_min_space,
-                    require_same_masks=self.cfg.require_same_masks,
-                    mask_dropout=self.cfg.mask_dropout,
-                )
-                mask_indices = torch.from_numpy(mask_indices).to(x.device)
-            x = index_put(x, mask_indices, self.mask_emb)
-        else:
-            mask_indices = None
-
-        if self.mask_channel_prob > 0 and not self.mask_channel_before:
-            if mask_channel_indices is None:
-                mask_channel_indices = compute_mask_indices(
-                    (B, C),
-                    None,
-                    self.mask_channel_prob,
-                    self.mask_channel_length,
-                    self.mask_channel_selection,
-                    self.mask_channel_other,
-                    no_overlap=self.no_mask_channel_overlap,
-                    min_space=self.mask_channel_min_space,
-                )
-                mask_channel_indices = (
-                    torch.from_numpy(mask_channel_indices)
-                    .to(x.device)
-                    .unsqueeze(1)
-                    .expand(-1, T, -1)
-                )
-            x = index_put(x, mask_channel_indices, 0)
-
-        return x, mask_indices
-
-    def forward(
-        self,
-        source,
-        padding_mask=None,
-        mask=True,
-        features_only=False,
-        layer=None,
-        mask_indices=None,
-        mask_channel_indices=None,
-        padding_count=None,
-    ):
-        if(len(source.shape)==1):
-            source = torch.unsqueeze(source,0)
-        features = source # [batch,length]
-
-        # we use conv_feature extractor instead of fbank
-        if self.feature_grad_mult > 0:
-            features = self.feature_extractor(features) # [batch,channel,frame]
-            if self.feature_grad_mult != 1.0:
-                features = GradMultiply.apply(features, self.feature_grad_mult)
-        else:
-            with torch.no_grad():
-                features = self.feature_extractor(features)
-
-        # in wav2vec, hubert, data2vec, we all use the layer_norm
-        features = features.transpose(1, 2) # [batch,frame,channel]
-        # print(features.shape)
-        features = self.layer_norm(features)
-        unmasked_features = features.clone()
-
-        # to get the code_books using unmasked_features
-        with torch.no_grad():
-            proj_vector = torch.matmul(unmasked_features,self.random_proj)
-            proj_vector = torch.unsqueeze(proj_vector,2)
-            norm2 = torch.squeeze(torch.sum(torch.sub(self.codebook, proj_vector) ** 2, dim=-1))
-            labels = torch.argmin(norm2, dim=-1)
-            if(len(labels.shape)==1):
-                labels = torch.unsqueeze(labels,0)
-            
-
-        # padding mask(used in data2vec)
-        if padding_mask is not None and padding_mask.any():
-            input_lengths = (1 - padding_mask.long()).sum(-1)
-            # apply conv formula to get real output_lengths
-            output_lengths = self._get_feat_extract_output_lengths(input_lengths)
-
-            padding_mask = torch.zeros(
-                features.shape[:2], dtype=features.dtype, device=features.device
-            )
-
-            # these two operations makes sure that all values
-            # before the output lengths indices are attended to
-            padding_mask[
-                (
-                    torch.arange(padding_mask.shape[0], device=padding_mask.device),
-                    output_lengths - 1,
-                )
-            ] = 1
-            padding_mask = (1 - padding_mask.flip([-1]).cumsum(-1).flip([-1])).bool()
-        else:
-            padding_mask = None
-
-        # post extract projection
-        if self.post_extract_proj is not None:
-            features = self.post_extract_proj(features) # [batch,frame,channel(512)] -> [batch,frame,channel(768)]
-
-        # features dropout
-        features = self.dropout_input(features)
-        
-        # masking
-        if mask:
-            x, mask_indices = self.apply_mask(
-                features,
-                padding_mask,
-                mask_indices=mask_indices,
-                mask_channel_indices=mask_channel_indices,
-            )
-        else:
-            x = features
-            mask_indices = None
-
-        # encoder: using the conformer
-        layer_results = []
-        r = None # the last layer output
-        position_emb = None
-        for i, layer in enumerate(self.encoder):
-            x, z = layer(
+# conformer
+conformer = torch.nn.ModuleList([
+    ConformerEncoderLayer(
+        embed_dim=768,
+        ffn_embed_dim=768,
+        attention_heads=12,
+        dropout=0.0,
+        use_fp16=False,
+    ) for _ in range(24)
+])
+layer_results = []
+position_emb = None
+padding_mask = None
+r = None
+for i, layer in enumerate(conformer):
+    x, z = layer(
                     x,
                     encoder_padding_mask=padding_mask,
                     position_emb=position_emb,
                 )
-            layer_results.append((x, z))
+    #if tgt_layer is not None:
+    layer_results.append((x, z))
+    if i == 23:
+        r = x
+        break
+print('conformer data:',r.shape)
 
-        if features_only:
-            return {
-                "x": x,
-                "padding_mask": padding_mask,
-                "layer_results": layer_results,
-            }
+final_proj = torch.nn.Linear(768, 8192)
+final = final_proj(r)
+print('final proj data:',final.shape)
+final = final.transpose(1, 2)
+print('final proj data:',final.shape)
 
-        result = {
-            "losses": {},
-        }
-        
-        x = torch.unsqueeze(x[mask_indices],0) # only use masked part
-        labels = torch.unsqueeze(labels[mask_indices],0) # only use masked part
-        x = self.final_proj(x) # [frame,channel(1024)] -> [frame,vocab_size(8192)]
+# random projection
+random_proj = torch.nn.Parameter(torch.empty(512, 16), requires_grad=False) # embedding_dim, codebook_dim
+codebook = torch.nn.Parameter(torch.empty(8192, 16), requires_grad=False)
+random_proj = torch.nn.init.xavier_normal_(random_proj)
+codebook = torch.nn.init.xavier_normal_(codebook)
+print('random projection:', random_proj.shape)
+print('codebook:', codebook.shape)
 
-        sz = x.size(-1) # 768
+with torch.no_grad():
+    proj_vector = torch.matmul(unmasked_features,random_proj)
+    print('proj vector:', proj_vector.shape)
+    # mask_num = proj_vector.shape[1]
+    # random_codebook = codebook.unsqueeze(1).repeat(1,mask_num,1,1)
+    # print('random codebook:', random_codebook.shape)
+    proj_vector = torch.unsqueeze(proj_vector, 2)
+    print('proj vector:', proj_vector.shape)
+    norm2 = torch.squeeze(torch.sum(torch.sub(codebook, proj_vector) ** 2, dim=-1))
+    print('norm2:', norm2.shape)
+    labels = torch.argmin(norm2, dim=-1)
+    print('labels:', labels.shape)
+    # print(labels)
 
-        if self.loss_scale is not None:
-            scale = self.loss_scale
-        else:
-            scale = 1 / math.sqrt(sz)
-
-        # x = self.dropout_output(x) # 
-        x = x.transpose(1, 2) # [1,vocab_size,frames]
-        
-        # loss
-        loss = self.criterion(x, labels) # labels: [1,frames]
-
-        result["losses"]["regression"] = loss.sum() * scale
-
-        if "sample_size" not in result:
-            result["sample_size"] = loss.numel()
-
-        with torch.no_grad():
-            result["target_var"] = self.compute_var(labels.float())
-            result["pred_var"] = self.compute_var(x.float())
-
-        return result
-        
-# other submodels
+criterion = torch.nn.CrossEntropyLoss()
+loss = criterion(final,labels)
+print(loss)

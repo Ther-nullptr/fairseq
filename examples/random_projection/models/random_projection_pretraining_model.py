@@ -5,6 +5,7 @@
 
 import math
 from dataclasses import dataclass, field
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -23,6 +24,12 @@ LAYER_TYPE_CHOICES = ChoiceEnum(["transformer", "conformer"])
 
 @dataclass
 class RandomProjectionConfig(Wav2Vec2Config):
+    loss_scale: Optional[float] = field(
+        default=None,
+        metadata={
+            "help": "scale the reconstruction loss by this constant. if None then scales by 1/sqrt(dim)"
+        },
+    )
     xavier_type: str = field(
         default="normal",
         metadata={
@@ -54,7 +61,7 @@ class RandomProjectionConfig(Wav2Vec2Config):
         }
     )
     conv_feature_layers: str = field(
-        default="[(1024, 10, 5)] + [(1024, 3, 2)] * 4 + [(1024,2,2)] + [(1024,2,2)]",
+        default="[(512, 10, 5)] + [(512, 3, 2)] * 4 + [(512,2,2)] + [(512,2,2)]",
         metadata={
             "help": "the conv shape [(dim,kernel_size,stride)]"
         }
@@ -137,6 +144,9 @@ class RandomProjectionModel(BaseFairseqModel):
         self.mask_length = cfg.mask_length
         self.no_mask_overlap = cfg.no_mask_overlap
         self.mask_min_space = cfg.mask_min_space
+        self.mask_emb = nn.Parameter(
+            torch.FloatTensor(cfg.encoder_embed_dim).uniform_()
+        )
 
         # mask prob settings
         self.mask_channel_prob = cfg.mask_channel_prob
@@ -146,9 +156,6 @@ class RandomProjectionModel(BaseFairseqModel):
         self.mask_channel_length = cfg.mask_channel_length
         self.no_mask_channel_overlap = cfg.no_mask_channel_overlap
         self.mask_channel_min_space = cfg.mask_channel_min_space
-        self.mask_emb = nn.Parameter(
-            torch.FloatTensor(cfg.encoder_embed_dim).uniform_()
-        )
 
         # dropout & layernorm
         self.dropout_input = nn.Dropout(cfg.dropout_input) # TODO
@@ -169,7 +176,7 @@ class RandomProjectionModel(BaseFairseqModel):
         self.final_proj = nn.Linear(in_features=cfg.encoder_embed_dim, out_features=cfg.codebook_vocab_size)
 
         # random projection
-        self.random_proj = nn.Parameter(torch.empty(self.embedding_dim, self.codebook_dim), requires_grad=False)
+        self.random_proj = nn.Parameter(torch.empty(self.extractor_embed, self.codebook_dim), requires_grad=False)
         self.codebook = nn.Parameter(torch.empty(self.codebook_vocab_size, self.codebook_dim), requires_grad=False)
         if(cfg.xavier_type == "normal"):
             self.random_proj = xavier_normal_(self.random_proj)
@@ -181,8 +188,9 @@ class RandomProjectionModel(BaseFairseqModel):
             raise Exception(
                 f"{cfg.xavier_type} is incorrect. Optional xavier types: normal, uniform"
             )
-
+        # loss
         self.criterion = nn.CrossEntropyLoss(reduction="mean")
+        self.loss_scale = cfg.loss_scale
         
         
 
@@ -290,6 +298,8 @@ class RandomProjectionModel(BaseFairseqModel):
         mask_channel_indices=None,
         padding_count=None,
     ):
+        if(len(source.shape)==1):
+            source = torch.unsqueeze(source,0)
         features = source # [batch,length]
 
         # we use conv_feature extractor instead of fbank
@@ -303,6 +313,7 @@ class RandomProjectionModel(BaseFairseqModel):
 
         # in wav2vec, hubert, data2vec, we all use the layer_norm
         features = features.transpose(1, 2) # [batch,frame,channel]
+        # print(features.shape)
         features = self.layer_norm(features)
         unmasked_features = features.clone()
 
@@ -312,6 +323,9 @@ class RandomProjectionModel(BaseFairseqModel):
             proj_vector = torch.unsqueeze(proj_vector,2)
             norm2 = torch.squeeze(torch.sum(torch.sub(self.codebook, proj_vector) ** 2, dim=-1))
             labels = torch.argmin(norm2, dim=-1)
+            if(len(labels.shape)==1):
+                labels = torch.unsqueeze(labels,0)
+            
 
         # padding mask(used in data2vec)
         if padding_mask is not None and padding_mask.any():
@@ -376,10 +390,10 @@ class RandomProjectionModel(BaseFairseqModel):
         result = {
             "losses": {},
         }
-
-        x = x[mask_indices] # only use masked part
-        labels = labels[mask_indices] # only use masked part
-        x = self.final_proj(x)
+        
+        x = torch.unsqueeze(x[mask_indices],0) # only use masked part
+        labels = torch.unsqueeze(labels[mask_indices],0) # only use masked part
+        x = self.final_proj(x) # [frame,channel(1024)] -> [frame,vocab_size(8192)]
 
         sz = x.size(-1) # 768
 
@@ -388,12 +402,11 @@ class RandomProjectionModel(BaseFairseqModel):
         else:
             scale = 1 / math.sqrt(sz)
 
-        # x = self.dropout_output(x) # [batch,frame,channel(768)]
-        x = self.final_proj(x) # [batch,frame,channel(768)] -> [batch,frame,vocab_size(8192)]
-        x = x.transpose(1, 2) # [batch,vocab_size,frame]
+        # x = self.dropout_output(x) # 
+        x = x.transpose(1, 2) # [1,vocab_size,frames]
         
         # loss
-        loss = self.criterion(x, labels) # labels: [batch,frame]
+        loss = self.criterion(x, labels) # labels: [1,frames]
 
         result["losses"]["regression"] = loss.sum() * scale
 
@@ -401,7 +414,7 @@ class RandomProjectionModel(BaseFairseqModel):
             result["sample_size"] = loss.numel()
 
         with torch.no_grad():
-            result["target_var"] = self.compute_var(labels)
+            result["target_var"] = self.compute_var(labels.float())
             result["pred_var"] = self.compute_var(x.float())
 
         return result
