@@ -54,7 +54,7 @@ class RandomProjectionConfig(Wav2Vec2Config):
         }
     )
     conv_feature_layers: str = field(
-        default="[(512, 10, 5)] + [(512, 3, 2)] * 4 + [(512,2,2)] + [(512,2,2)]",
+        default="[(1024, 10, 5)] + [(1024, 3, 2)] * 4 + [(1024,2,2)] + [(1024,2,2)]",
         metadata={
             "help": "the conv shape [(dim,kernel_size,stride)]"
         }
@@ -146,6 +146,9 @@ class RandomProjectionModel(BaseFairseqModel):
         self.mask_channel_length = cfg.mask_channel_length
         self.no_mask_channel_overlap = cfg.no_mask_channel_overlap
         self.mask_channel_min_space = cfg.mask_channel_min_space
+        self.mask_emb = nn.Parameter(
+            torch.FloatTensor(cfg.encoder_embed_dim).uniform_()
+        )
 
         # dropout & layernorm
         self.dropout_input = nn.Dropout(cfg.dropout_input) # TODO
@@ -163,7 +166,7 @@ class RandomProjectionModel(BaseFairseqModel):
                 depthwise_conv_kernel_size=cfg.encoder_depthwise_conv_kernel_size,
             ) for _ in range(cfg.encoder_layers)]
         )
-        self.final_proj = nn.Linear(in_features=cfg.encoder_ffn_embed_dim, out_features=cfg.codebook_vocab_size)
+        self.final_proj = nn.Linear(in_features=cfg.encoder_embed_dim, out_features=cfg.codebook_vocab_size)
 
         # random projection
         self.random_proj = nn.Parameter(torch.empty(self.embedding_dim, self.codebook_dim), requires_grad=False)
@@ -358,8 +361,7 @@ class RandomProjectionModel(BaseFairseqModel):
         for i, layer in enumerate(self.encoder):
             x, z = layer(
                     x,
-                    self_attn_padding_mask=padding_mask,
-                    need_weights=False,
+                    encoder_padding_mask=padding_mask,
                     position_emb=position_emb,
                 )
             layer_results.append((x, z))
