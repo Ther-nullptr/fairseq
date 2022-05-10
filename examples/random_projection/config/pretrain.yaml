@@ -20,12 +20,13 @@ task:
   normalize: false
 
 dataset:
-  num_workers: 0
-  max_tokens: 1400000
+  num_workers: 6
+  max_tokens: 560000
   skip_invalid_size_inputs_valid_test: true
 
 distributed_training:
-  distributed_world_size: 8 # use 8 or 16 in pcl
+  distributed_world_size: 1 # use 8 or 16 in pcl
+  ddp_backend: legacy_ddp
 
 criterion:
   _name: model
@@ -49,10 +50,16 @@ lr_scheduler:
 
 model:
   _name: random_projection
-  # quantize_targets: true
-  # final_dim: 256
-  # encoder_layerdrop: 0.05
-  # dropout_input: 0.1
-  # dropout_features: 0.1
-  # feature_grad_mult: 0.1
-  # encoder_embed_dim: 768
+  xavier_type: normal
+  codebook_vocab_size: 8192
+  codebook_dim: 16
+  conv_feature_layers: '[(512, 10, 5)] + [(512, 3, 2)] * 4 + [(512,2,2)] + [(512,2,2)]'
+  encoder_embed_dim: 1024
+  encoder_ffn_embed_dim: 4096 # according to conformer paper
+  dropout_ratio: 0.0
+  encoder_layers: 24 # encoder layers of conformer
+  encoder_depthwise_conv_kernel_size: 5
+  encoder_attention_heads: 8
+  mask_length: 20
+  mask_prob: 0.1
+  

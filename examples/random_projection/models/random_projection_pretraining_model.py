@@ -36,18 +36,6 @@ class RandomProjectionConfig(Wav2Vec2Config):
             "help": "xavier init type. options: uniform, normal"
         },
     )
-    fbank_dim: int = field(
-        default=80,
-        metadata={
-            "help": "fbank dim"
-        },
-    )
-    fbank_shift: int= field(
-        default=10,
-        metadata={
-            "help": "fbank shift stride"
-        },
-    )
     codebook_vocab_size: int = field(
         default= 8192,
         metadata={
