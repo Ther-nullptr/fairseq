@@ -113,8 +113,6 @@ class RandomProjectionModel(BaseFairseqModel):
         self.extractor_embed = self.feature_enc_layers[-1][0] # default: 512
         self.embedding_dim = cfg.encoder_embed_dim # input embedding dimenson of the conformer
         self.encoder_ffn_embed_dim = cfg.encoder_ffn_embed_dim # FFN layer dimension
-        self.fbank_dim = cfg.fbank_dim # default: 80
-        self.fbank_shift = cfg.fbank_shift # default: 10
         self.codebook_vocab_size = cfg.codebook_vocab_size # default: 8192
         self.codebook_dim = cfg.codebook_dim # default: 16
         self.dropout_ratio = cfg.dropout_ratio # default: 0.1
