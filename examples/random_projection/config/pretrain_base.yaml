@@ -5,7 +5,7 @@ common:
   log_format: json
   log_interval: 200
   tensorboard_logdir: tb
-  wandb_project: wandb
+  wandb_project: random_projection
 
 checkpoint:
   save_interval_updates: 25000
@@ -17,15 +17,19 @@ task:
   data: ???
   max_sample_size: 250000
   min_sample_size: 32000
+  sample_rate: 16000
   normalize: false
 
 dataset:
   num_workers: 6
-  max_tokens: 560000
+  max_tokens: 1400000
   skip_invalid_size_inputs_valid_test: true
+  validate_interval: 5
+  validate_interval_updates: 10000
 
 distributed_training:
-  distributed_world_size: 1 # use 8 or 16 in pcl
+  distributed_backend: 'nccl'
+  distributed_world_size: 8 # use 8 or 16 in pcl
   ddp_backend: legacy_ddp
 
 criterion:
@@ -50,16 +54,19 @@ lr_scheduler:
 
 model:
   _name: random_projection
+  layer_type: transformer # or conformer
   xavier_type: normal
   codebook_vocab_size: 8192
   codebook_dim: 16
   conv_feature_layers: '[(512, 10, 5)] + [(512, 3, 2)] * 4 + [(512,2,2)] + [(512,2,2)]'
-  encoder_embed_dim: 1024
-  encoder_ffn_embed_dim: 4096 # according to conformer paper
-  dropout_ratio: 0.0
-  encoder_layers: 24 # encoder layers of conformer
-  encoder_depthwise_conv_kernel_size: 5
+  encoder_embed_dim: 768
+  encoder_ffn_embed_dim: 3072
+  dropout_input: 0.1
+  dropout_features: 0.1
+  dropout: 0.1
+  encoder_layers: 12
+  encoder_depthwise_conv_kernel_size: 5 # only useful in conformer
   encoder_attention_heads: 8
-  mask_length: 20
-  mask_prob: 0.1
+  mask_length: 10
+  mask_prob: 0.80
   

@@ -36,6 +36,18 @@ class RandomProjectionConfig(Wav2Vec2Config):
             "help": "xavier init type. options: uniform, normal"
         },
     )
+    fbank_dim: int = field(
+        default=80,
+        metadata={
+            "help": "fbank dim"
+        },
+    )
+    fbank_shift: int= field(
+        default=10,
+        metadata={
+            "help": "fbank shift stride"
+        },
+    )
     codebook_vocab_size: int = field(
         default= 8192,
         metadata={
@@ -66,12 +78,6 @@ class RandomProjectionConfig(Wav2Vec2Config):
             "help": "FFN layer dimension"
         }
     )
-    dropout_ratio: float = field(
-        default = 0.0,
-        metadata={
-            "help": "dropout ratio"
-        } 
-    )
     batch_size: int = field(
         default = 2048,
         metadata= {
@@ -98,6 +104,8 @@ class RandomProjectionConfig(Wav2Vec2Config):
     mask_prob: float = field(
         default=0.1, metadata={"help": "probability of replacing a token with mask"}
     )
+    use_conformer: bool = field(default = False,
+        metadata={"help": "if True, use conformer, else use transformer"})
 
 
 @register_model("random_projection",dataclass = RandomProjectionConfig)
@@ -113,9 +121,10 @@ class RandomProjectionModel(BaseFairseqModel):
         self.extractor_embed = self.feature_enc_layers[-1][0] # default: 512
         self.embedding_dim = cfg.encoder_embed_dim # input embedding dimenson of the conformer
         self.encoder_ffn_embed_dim = cfg.encoder_ffn_embed_dim # FFN layer dimension
+        self.fbank_dim = cfg.fbank_dim # default: 80
+        self.fbank_shift = cfg.fbank_shift # default: 10
         self.codebook_vocab_size = cfg.codebook_vocab_size # default: 8192
         self.codebook_dim = cfg.codebook_dim # default: 16
-        self.dropout_ratio = cfg.dropout_ratio # default: 0.1
         self.feature_grad_mult = cfg.feature_grad_mult # default: 1.0
 
         # google usually use fbank, we use conv_feature extractor instead
@@ -153,16 +162,7 @@ class RandomProjectionModel(BaseFairseqModel):
         
         # conformer
         self.tgt_layer = cfg.encoder_layers
-        self.encoder = nn.ModuleList(
-            [ConformerEncoderLayer(
-                embed_dim=self.embedding_dim,
-                ffn_embed_dim=cfg.encoder_ffn_embed_dim,
-                attention_heads=cfg.encoder_attention_heads,
-                dropout=cfg.dropout,
-                use_fp16=True,
-                depthwise_conv_kernel_size=cfg.encoder_depthwise_conv_kernel_size,
-            ) for _ in range(cfg.encoder_layers)]
-        )
+        self.encoder = TransformerEncoder(cfg)
         self.final_proj = nn.Linear(in_features=cfg.encoder_embed_dim, out_features=cfg.codebook_vocab_size)
 
         # random projection
@@ -358,17 +358,9 @@ class RandomProjectionModel(BaseFairseqModel):
             x = features
             mask_indices = None
 
-        # encoder: using the conformer
-        layer_results = []
-        r = None # the last layer output
-        position_emb = None
-        for i, layer in enumerate(self.encoder):
-            x, z = layer(
-                    x,
-                    encoder_padding_mask=padding_mask,
-                    position_emb=position_emb,
-                )
-            layer_results.append((x, z))
+        # encoder: using the conformer or transformer
+        x, layers = x, layer_results = self.encoder(x, padding_mask=padding_mask, layer=layer)
+        
 
         if features_only:
             return {
@@ -385,12 +377,12 @@ class RandomProjectionModel(BaseFairseqModel):
         labels = torch.unsqueeze(labels[mask_indices],0) # only use masked part
         x = self.final_proj(x) # [frame,channel(1024)] -> [frame,vocab_size(8192)]
 
-        sz = x.size(-1) # 768
+        # sz = x.size(-1) # 768
 
-        if self.loss_scale is not None:
-            scale = self.loss_scale
-        else:
-            scale = 1 / math.sqrt(sz)
+        # if self.loss_scale is not None:
+        #     scale = self.loss_scale
+        # else:
+        #     scale = 1 / math.sqrt(sz)
 
         # x = self.dropout_output(x) # 
         x = x.transpose(1, 2) # [1,vocab_size,frames]
@@ -398,7 +390,7 @@ class RandomProjectionModel(BaseFairseqModel):
         # loss
         loss = self.criterion(x, labels) # labels: [1,frames]
 
-        result["losses"]["regression"] = loss.sum() * scale
+        result["losses"]["regression"] = loss.sum()
 
         if "sample_size" not in result:
             result["sample_size"] = loss.numel()
