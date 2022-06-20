@@ -192,19 +192,18 @@ class RandomProjectionModel(BaseFairseqModel):
     @staticmethod
     def compute_var(y):
         y = y.view(-1, y.size(-1))
-        if dist.is_initialized():
-            zc = torch.tensor(y.size(0)).cuda()
-            zs = y.sum(dim=0)
-            zss = (y ** 2).sum(dim=0)
+#         if dist.is_initialized():
+#             zc = torch.tensor(y.size(0)).cuda()
+#             zs = y.sum(dim=0)
+#             zss = (y ** 2).sum(dim=0)
 
-            dist.all_reduce(zc)
-            dist.all_reduce(zs)
-            dist.all_reduce(zss)
+#             dist.all_reduce(zc)
+#             dist.all_reduce(zs)
+#             dist.all_reduce(zss)
 
-            var = zss / (zc - 1) - (zs ** 2) / (zc * (zc - 1))
-            return torch.sqrt(var + 1e-6).mean()
-        else:
-            return torch.sqrt(y.var(dim=0) + 1e-6).mean()
+#             var = zss / (zc - 1) - (zs ** 2) / (zc * (zc - 1))
+#             return torch.sqrt(var + 1e-6).mean()
+        return torch.sqrt(y.var(dim=0) + 1e-6).mean()
 
     # the function is same as data2vec
     def apply_mask(
@@ -376,6 +375,8 @@ class RandomProjectionModel(BaseFairseqModel):
         x = torch.unsqueeze(x[mask_indices],0) # only use masked part
         labels = torch.unsqueeze(labels[mask_indices],0) # only use masked part
         x = self.final_proj(x) # [frame,channel(1024)] -> [frame,vocab_size(8192)]
+        sz = x.size(-1)
+        scale = 1 / math.sqrt(sz)
 
         # sz = x.size(-1) # 768
 
@@ -390,7 +391,7 @@ class RandomProjectionModel(BaseFairseqModel):
         # loss
         loss = self.criterion(x, labels) # labels: [1,frames]
 
-        result["losses"]["regression"] = loss.sum()
+        result["losses"]["regression"] = loss.sum() * scale
 
         if "sample_size" not in result:
             result["sample_size"] = loss.numel()

@@ -1,7 +1,8 @@
 # @package _group_
 
 common:
-  fp16: true
+  fp16: false
+  cpu: true
   log_format: json
   log_interval: 200
   tensorboard_logdir: tb
@@ -21,16 +22,16 @@ task:
   normalize: false
 
 dataset:
-  num_workers: 6
-  max_tokens: 1400000
+  num_workers: 1
+  max_tokens: 140000
   skip_invalid_size_inputs_valid_test: true
   validate_interval: 5
   validate_interval_updates: 10000
 
-distributed_training:
-  distributed_backend: 'nccl'
-  distributed_world_size: 8 # use 8 or 16 in pcl
-  ddp_backend: legacy_ddp
+# distributed_training:
+#   distributed_backend: 'nccl'
+#   distributed_world_size: 0 # use 8 or 16 in pcl
+#   ddp_backend: legacy_ddp
 
 criterion:
   _name: model
@@ -64,7 +65,7 @@ model:
   dropout_input: 0.1
   dropout_features: 0.1
   dropout: 0.1
-  encoder_layers: 12
+  encoder_layers: 2
   encoder_depthwise_conv_kernel_size: 5 # only useful in conformer
   encoder_attention_heads: 8
   mask_length: 10
