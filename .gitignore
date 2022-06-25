@@ -147,3 +147,4 @@ audio/
 # other
 .vscode/
 models/
+tmp/
