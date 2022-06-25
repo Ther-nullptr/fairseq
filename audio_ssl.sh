@@ -1,6 +1,9 @@
 #!/bin/bash
 # presetup
 
+# wandb
+wandb login 383625c51b76df6f1ebd5bbaa3d61bab9d3aa629
+
 # set working dir and output dir names
 work_dir=/mnt/lustre/sjtu/home/xc915/superb/wyj-fairseq # or /home
 cd ${work_dir}
@@ -18,7 +21,7 @@ wandb_project=data2vec_adapter_10min
 # stage 1: pretrain
 # stage 2: finetune
 # stage 3: decode
-stage=2
+stage=3
 
 # model_name need to be [wav2vec|hubert|data2vec]
 model_name=data2vec
@@ -423,16 +426,16 @@ if [ ${model_name} == "data2vec" ]; then
         --config-dir ${config_finetune_dir} \
         --config-name ${config_finetune_name} \
         task.data=${finetune_data_path} \
-        task.label_dir=${finetune_data_path} \
         model.w2v_path=${pretrain_model_name} \
         hydra.run.dir=${finetune_output_dir} \
         common.log_interval=10 \
+        common.user_dir=examples/data2vec \
         +criterion.wer_kenlm_model=${arpa_file} \
         +criterion.wer_lexicon=${lexicon_file} \
         +criterion.wer_lm_weight=2 \
         +criterion.wer_word_score=-1 \
         common.wandb_project=${wandb_project} \
-        model.using_adapter=true \
+        model.using_adapter=true 
 
     fi
 
@@ -455,7 +458,7 @@ if [ ${model_name} == "data2vec" ]; then
 
         decode_data_path=/mnt/lustre/sjtu/home/xc915/superb/dataset/librispeech_finetuning_data/${decode_data_type}
         # decode_model_path=/userhome/user/chenxie95/github/fairseq/outputs/hubert/pretrained_models/checkpoint_best.pt
-        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/data2vec-finetune/audio_base_ls_100h.pt
+        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/data2vec-finetune/audio_base_ls_10m.pt
 
         if ${use_kenlm}; then
             cd ${code_dir} && python3 examples/speech_recognition/new/infer.py \
