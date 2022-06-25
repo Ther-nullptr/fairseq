@@ -6,6 +6,13 @@
 
 ## docker
 
+进入调试界面：
+
 ```bash
-$  docker run -it --rm --gpus all -v /mnt:/mnt chenxie95/speechimage:flashlight-v2 /bin/bash
+$ docker run -it --rm --gpus all --name=fairseq_decode -v /mnt:/mnt chenxie95/speechimage:flashlight-v2 /bin/bash
+```
+
+直接使用docker运行某脚本：
+```bash
+$ docker run -it --rm --gpus all --name=fairseq_decode -v /mnt:/mnt chenxie95/speechimage:flashlight-v3 /bin/bash -c 'sh /mnt/lustre/sjtu/home/xc915/superb/wyj-fairseq/audio_ssl.sh'
 ```
