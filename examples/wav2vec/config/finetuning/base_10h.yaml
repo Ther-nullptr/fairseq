@@ -61,3 +61,6 @@ model:
   activation_dropout: 0.1
   feature_grad_mult: 0.0
   freeze_finetune_updates: 10000
+  using_adapter: true
+  adapter_dim: 256
+  adapter_num: 12 
