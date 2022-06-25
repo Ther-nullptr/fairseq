@@ -1,15 +1,24 @@
 #!/bin/bash
 # presetup
 
-pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
-pip install torch==1.10.2+cu113 torchvision==0.11.3+cu113 torchaudio==0.10.2+cu113 -f https://download.pytorch.org/whl/cu113/torch_stable.html
-pip install -e .
+# set working dir and output dir names
+work_dir=/mnt/lustre/sjtu/home/xc915/superb/wyj-fairseq # or /home
+cd ${work_dir}
 
+# pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+# pip install torch==1.10.2+cu113 torchvision==0.11.3+cu113 torchaudio==0.10.2+cu113 -f https://download.pytorch.org/whl/cu113/torch_stable.html
+# pip install -e .
+
+# set time stamp
+timestamp=`date +%Y-%m-%d-%H-%M`
+
+# !important setup wandb project
+wandb_project=data2vec_adapter_10min
 
 # stage 1: pretrain
 # stage 2: finetune
 # stage 3: decode
-stage=3
+stage=2
 
 # model_name need to be [wav2vec|hubert|data2vec]
 model_name=data2vec
@@ -17,7 +26,6 @@ model_name=data2vec
 # set working dir and output dir names
 work_dir=/mnt/lustre/sjtu/home/xc915/superb/wyj-fairseq # or /home
 exp_name=libri960h_base
-
 
 # directory where fairseq is installed
 # e.g. in my docker image, it is /espnet/tools/fairseq
@@ -252,8 +260,7 @@ if [ ${model_name} == "hubert" ]; then
         dataset.train_subset=${train_subset}  \
         dataset.valid_subset=${valid_subset} \
         hydra.run.dir=${output_dir} \
-        common.log_interval=10 \
-
+        common.log_interval=10 
     fi
 
 
@@ -392,20 +399,25 @@ if [ ${model_name} == "data2vec" ]; then
         log "Stage 2: finetune"
 
         # set finetune config
-        config_finetune_dir=${work_dir}/examples/hubert/config/finetune
-        config_finetune_name=base_10h
+        config_finetune_dir=${work_dir}/examples/wav2vec/config/finetuning
+        config_finetune_name=base_10m
 
         # set pretrained model
-        output_dir=${work_dir}/outputs/${model_name}/${exp_name}/
-        pretrain_model_name=/userhome/user/chenxie95/github/fairseq/outputs/hubert/pretrained_models/hubert_base_ls960.pt
+        output_dir=${work_dir}/outputs/${model_name}/${exp_name}/${timestamp}
+        pretrain_model_name=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/audio_base_ls.pt
         # pretrain_model_name=${output_dir}/checkpoints/checkpoint_36_25000.pt
 
         # set finetune data
-        finetune_data_mode=10h
-        finetune_data_path=/userhome/data/librispeech/librispeech_finetuning_data/${finetune_data_mode}
+        finetune_data_mode=10min
+        finetune_data_path=/mnt/lustre/sjtu/home/xc915/superb/dataset/librispeech_finetuning_data/${finetune_data_mode}
 
         # set finetune output model
-        finetune_output_dir=${output_dir}/finetune_${finetune_data_mode}
+        finetune_output_dir=${output_dir}/finetune_${finetune_data_mode}/${timestamp}
+
+        # (optional) add lm
+        lexicon_file=/mnt/lustre/sjtu/home/xc915/superb/nlp_utils/lexicon/librispeech_lexicon.lst
+        arpa_file=/mnt/lustre/sjtu/home/xc915/superb/nlp_utils/arpa/4-gram.mmap
+
 
         cd ${code_dir} && python3 fairseq_cli/hydra_train.py \
         --config-dir ${config_finetune_dir} \
@@ -415,6 +427,12 @@ if [ ${model_name} == "data2vec" ]; then
         model.w2v_path=${pretrain_model_name} \
         hydra.run.dir=${finetune_output_dir} \
         common.log_interval=10 \
+        +criterion.wer_kenlm_model=${arpa_file} \
+        +criterion.wer_lexicon=${lexicon_file} \
+        +criterion.wer_lm_weight=2 \
+        +criterion.wer_word_score=-1 \
+        common.wandb_project=${wandb_project} \
+        model.using_adapter=true \
 
     fi
 
@@ -429,15 +447,15 @@ if [ ${model_name} == "data2vec" ]; then
 
         # lexicon & ngram for hubert
         lexicon_file=/mnt/lustre/sjtu/home/xc915/superb/nlp_utils/lexicon/librispeech_lexicon.lst
-        arpa_file=/mnt/lustre/sjtu/home/xc915/superb/nlp_utils/arpa/4-gram.arpa
+        arpa_file=/mnt/lustre/sjtu/home/xc915/superb/nlp_utils/arpa/4-gram.mmap
 
         # use lm
         use_kenlm=true
-        decode_data_type=dev-clean
+        decode_data_type=dev-other
 
         decode_data_path=/mnt/lustre/sjtu/home/xc915/superb/dataset/librispeech_finetuning_data/${decode_data_type}
         # decode_model_path=/userhome/user/chenxie95/github/fairseq/outputs/hubert/pretrained_models/checkpoint_best.pt
-        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/wyj-fairseq/models/audio_base_ls_10m.pt
+        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/data2vec-finetune/audio_base_ls_100h.pt
 
         if ${use_kenlm}; then
             cd ${code_dir} && python3 examples/speech_recognition/new/infer.py \

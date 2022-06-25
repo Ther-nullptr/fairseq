@@ -17,6 +17,7 @@ task:
   data: ???
   normalize: false
   labels: ltr
+  label_dir: ???
 
 dataset:
   num_workers: 6
@@ -24,7 +25,7 @@ dataset:
   skip_invalid_size_inputs_valid_test: true
   validate_after_updates: 10000
   validate_interval: 1000
-  valid_subset: dev_other
+  valid_subset: valid
 
 distributed_training:
   ddp_backend: legacy_ddp
