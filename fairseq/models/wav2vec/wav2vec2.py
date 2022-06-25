@@ -289,6 +289,12 @@ class Wav2Vec2Config(FairseqDataclass):
     )
     fp16: bool = field(default=False, metadata={"help": "If fp16 is being used"})
 
+    # about adapter
+    using_adapter: bool = field(default=False, metadata={"help": "use adapter or not."})
+    adapter_dim: int = field(default=256, metadata={"help": "default dim of adapter."})
+    adapter_num: int = field(default=12, metadata={"help": "default num of adapter."})
+
+    
 
 @register_model("wav2vec2", dataclass=Wav2Vec2Config)
 class Wav2Vec2Model(BaseFairseqModel):
@@ -345,6 +351,10 @@ class Wav2Vec2Model(BaseFairseqModel):
         self.logit_temp = cfg.logit_temp
 
         final_dim = cfg.final_dim if cfg.final_dim > 0 else cfg.encoder_embed_dim
+
+        self.using_adapter = cfg.using_adapter
+        self.adapter_dim = cfg.adapter_dim
+        self.adapter_num = cfg.adapter_num
 
         if cfg.quantize_targets:
             vq_dim = cfg.latent_dim if cfg.latent_dim > 0 else final_dim
@@ -1008,6 +1018,9 @@ class TransformerEncoder(nn.Module):
                 activation_dropout=args.activation_dropout,
                 activation_fn=args.activation_fn,
                 layer_norm_first=args.layer_norm_first,
+                using_adapter=args.using_adapter,
+                adapter_dim=args.adapter_dim,
+                adapter_num=args.adapter_num
             )
         elif args.layer_type == "conformer":
             layer = ConformerWav2Vec2EncoderLayer(
@@ -1070,9 +1083,12 @@ class TransformerEncoder(nn.Module):
                 args.conv_pos_groups,
             )
 
+        
         self.layers = nn.ModuleList(
-            [self.build_encoder_layer(args) for _ in range(args.encoder_layers)]
-        )
+                [self.build_encoder_layer(args) for _ in range(args.encoder_layers)]
+            )
+        
+
         self.layer_norm_first = args.layer_norm_first
         self.layer_norm = LayerNorm(self.embedding_dim)
         self.layerdrop = args.encoder_layerdrop
@@ -1268,6 +1284,9 @@ class TransformerSentenceEncoderLayer(nn.Module):
         activation_dropout: float = 0.1,
         activation_fn: str = "relu",
         layer_norm_first: bool = False,
+        using_adapter: bool = False,
+        adapter_dim: int = 256,
+        adapter_num: int = 12
     ) -> None:
 
         super().__init__()
@@ -1299,6 +1318,22 @@ class TransformerSentenceEncoderLayer(nn.Module):
         # layer norm associated with the position wise feed-forward NN
         self.final_layer_norm = LayerNorm(self.embedding_dim)
 
+        self.using_adapter = using_adapter
+        if(using_adapter):
+            self.adapter1 = nn.ModuleList(
+                nn.Linear(self.embedding_dim, adapter_dim),
+                nn.GELU(),
+                nn.Linear(adapter_dim, self.embedding_dim),
+                LayerNorm(self.embedding_dim)
+            )
+
+            self.adapter2 = nn.ModuleList(
+                nn.Linear(self.embedding_dim, adapter_dim),
+                nn.GELU(),
+                nn.Linear(adapter_dim, self.embedding_dim),
+                LayerNorm(self.embedding_dim)
+            )
+
     def forward(
         self,
         x: torch.Tensor,
@@ -1312,53 +1347,119 @@ class TransformerSentenceEncoderLayer(nn.Module):
         modules similar to the original Transformer imlementation.
         """
         residual = x
+        if not self.using_adapter:
+            if self.layer_norm_first:
+                x = self.self_attn_layer_norm(x)
+                x, attn = self.self_attn(
+                    query=x,
+                    key=x,
+                    value=x,
+                    key_padding_mask=self_attn_padding_mask,
+                    attn_mask=self_attn_mask,
+                    need_weights=False,
+                )
+                x = self.dropout1(x)
+                x = residual + x
 
-        if self.layer_norm_first:
-            x = self.self_attn_layer_norm(x)
-            x, attn = self.self_attn(
-                query=x,
-                key=x,
-                value=x,
-                key_padding_mask=self_attn_padding_mask,
-                attn_mask=self_attn_mask,
-                need_weights=False,
-            )
-            x = self.dropout1(x)
-            x = residual + x
+                residual = x
+                x = self.final_layer_norm(x)
+                x = self.activation_fn(self.fc1(x))
+                x = self.dropout2(x)
+                x = self.fc2(x)
 
-            residual = x
-            x = self.final_layer_norm(x)
-            x = self.activation_fn(self.fc1(x))
-            x = self.dropout2(x)
-            x = self.fc2(x)
+                layer_result = x
 
-            layer_result = x
+                x = self.dropout3(x)
+                x = residual + x
+            else:
+                x, attn = self.self_attn(
+                    query=x,
+                    key=x,
+                    value=x,
+                    key_padding_mask=self_attn_padding_mask,
+                    need_weights=False,
+                )
 
-            x = self.dropout3(x)
-            x = residual + x
+                x = self.dropout1(x)
+                x = residual + x
+
+                x = self.self_attn_layer_norm(x)
+
+                residual = x
+                x = self.activation_fn(self.fc1(x))
+                x = self.dropout2(x)
+                x = self.fc2(x)
+
+                layer_result = x
+
+                x = self.dropout3(x)
+                x = residual + x
+                x = self.final_layer_norm(x)
+
         else:
-            x, attn = self.self_attn(
-                query=x,
-                key=x,
-                value=x,
-                key_padding_mask=self_attn_padding_mask,
-                need_weights=False,
-            )
+            if self.layer_norm_first:
+                x = self.self_attn_layer_norm(x)
 
-            x = self.dropout1(x)
-            x = residual + x
+                with torch.no_grad():
+                    x, attn = self.self_attn(
+                        query=x,
+                        key=x,
+                        value=x,
+                        key_padding_mask=self_attn_padding_mask,
+                        attn_mask=self_attn_mask,
+                        need_weights=False,
+                    )
+                    x = self.dropout1(x)
 
-            x = self.self_attn_layer_norm(x)
+                # add adapter there
+                x = self.adapter1(x)
 
-            residual = x
-            x = self.activation_fn(self.fc1(x))
-            x = self.dropout2(x)
-            x = self.fc2(x)
+                x = residual + x
 
-            layer_result = x
+                residual = x
+                x = self.final_layer_norm(x)
 
-            x = self.dropout3(x)
-            x = residual + x
-            x = self.final_layer_norm(x)
+                with torch.no_grad():
+                    x = self.activation_fn(self.fc1(x))
+                    x = self.dropout2(x)
+                    x = self.fc2(x)
+
+                # add adapter there
+                x = self.adapter2(x)
+
+                layer_result = x
+
+                x = self.dropout3(x)
+                x = residual + x
+            else:
+                with torch.no_grad():
+                    x, attn = self.self_attn(
+                        query=x,
+                        key=x,
+                        value=x,
+                        key_padding_mask=self_attn_padding_mask,
+                        need_weights=False,
+                    )
+                    x = self.dropout1(x)
+
+                # add adapter there
+                x = self.adapter1(x)
+                x = residual + x
+                x = self.self_attn_layer_norm(x)
+
+                residual = x
+
+                with torch.no_grad():
+                    x = self.activation_fn(self.fc1(x))
+                    x = self.dropout2(x)
+                    x = self.fc2(x)
+                
+                # add adapter there
+                x = self.adapter2(x)
+                layer_result = x
+
+                x = self.dropout3(x)
+                x = residual + x
+                x = self.final_layer_norm(x)
 
         return x, (attn, layer_result)

@@ -182,12 +182,18 @@ class Wav2Vec2AsrConfig(FairseqDataclass):
     )
     ddp_backend: str = II("distributed_training.ddp_backend")
 
+    # about adapter
+    using_adapter: bool = field(default=False, metadata={"help": "use adapter or not."})
+    adapter_dim: int = field(default=256, metadata={"help": "default dim of adapter."})
+    adapter_num: int = field(default=12, metadata={"help": "default num of adapter."})
+
+    
+
 
 @dataclass
 class Wav2Vec2CtcConfig(Wav2Vec2AsrConfig):
     blank_weight: float = 0
     blank_mode: str = "add"
-
 
 @register_model("wav2vec_ctc", dataclass=Wav2Vec2CtcConfig)
 class Wav2VecCtc(BaseFairseqModel):
@@ -480,7 +486,7 @@ class Wav2VecEncoder(FairseqEncoder):
 
         ft = self.freeze_finetune_updates <= self.num_updates
 
-        with torch.no_grad() if not ft else contextlib.ExitStack():
+        with torch.no_grad() if not ft else contextlib.ExitStack(): #! infact, the with torch.no_grad() is off there.
             res = self.w2v_model.extract_features(**w2v_args)
 
             x = res["x"]
