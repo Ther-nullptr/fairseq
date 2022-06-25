@@ -1,9 +1,11 @@
-# 工作流
+## 工作流
 
 1. 在本地wsl上修改代码，每到一个milestone就commit一次。
 2. 分别向origin(SJTU Server)和server(THU Server)push。
 3. 在THU Server和SJTU Server上运行时，先向远程仓库拉取。 
 
-# 模型上传
+## docker
 
-1. 使用upload_THU.sh 或 upload_SJTU.sh 在本地wsl上上传模型。
+```bash
+$  docker run -it --rm --gpus all -v /mnt:/mnt chenxie95/speechimage:flashlight-v2 /bin/bash
+```
