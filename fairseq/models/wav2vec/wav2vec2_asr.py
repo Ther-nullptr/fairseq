@@ -469,7 +469,7 @@ class Wav2VecEncoder(FairseqEncoder):
         else:
             if "_ema" in state["model"]:
                 del state["model"]["_ema"]
-            model.load_state_dict(state["model"], strict=True)
+            model.load_state_dict(state["model"], strict=False)
 
     def set_num_updates(self, num_updates):
         """Set the number of parameters updates."""

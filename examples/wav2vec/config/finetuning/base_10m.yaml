@@ -15,7 +15,7 @@ checkpoint:
 task:
   _name: audio_finetuning
   data: ???
-  normalize: false
+  normalize: true
   labels: ltr
   label_dir: ???
 
