@@ -1284,7 +1284,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
         activation_dropout: float = 0.1,
         activation_fn: str = "relu",
         layer_norm_first: bool = False,
-        using_adapter: bool = False,
+        using_adapter: bool = True,
         adapter_dim: int = 256,
         adapter_num: int = 12
     ) -> None:
@@ -1319,15 +1319,15 @@ class TransformerSentenceEncoderLayer(nn.Module):
         self.final_layer_norm = LayerNorm(self.embedding_dim)
 
         self.using_adapter = using_adapter
-        if(using_adapter):
-            self.adapter1 = nn.ModuleList(
+        
+        self.adapter1 = nn.Sequential(
                 nn.Linear(self.embedding_dim, adapter_dim),
                 nn.GELU(),
                 nn.Linear(adapter_dim, self.embedding_dim),
                 LayerNorm(self.embedding_dim)
             )
 
-            self.adapter2 = nn.ModuleList(
+        self.adapter2 = nn.Sequential(
                 nn.Linear(self.embedding_dim, adapter_dim),
                 nn.GELU(),
                 nn.Linear(adapter_dim, self.embedding_dim),
@@ -1347,6 +1347,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
         modules similar to the original Transformer imlementation.
         """
         residual = x
+        self.using_adapter = True
         if not self.using_adapter:
             if self.layer_norm_first:
                 x = self.self_attn_layer_norm(x)
