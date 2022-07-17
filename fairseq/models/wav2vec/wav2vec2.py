@@ -294,7 +294,7 @@ class Wav2Vec2Config(FairseqDataclass):
     adapter_dim: int = field(default=256, metadata={"help": "default dim of adapter."})
     adapter_num: int = field(default=12, metadata={"help": "default num of adapter."})
 
-    
+
 
 @register_model("wav2vec2", dataclass=Wav2Vec2Config)
 class Wav2Vec2Model(BaseFairseqModel):
@@ -1018,9 +1018,9 @@ class TransformerEncoder(nn.Module):
                 activation_dropout=args.activation_dropout,
                 activation_fn=args.activation_fn,
                 layer_norm_first=args.layer_norm_first,
-                using_adapter=args.using_adapter,
-                adapter_dim=args.adapter_dim,
-                adapter_num=args.adapter_num
+                using_adapter=False,
+                adapter_dim=256,
+                adapter_num=12
             )
         elif args.layer_type == "conformer":
             layer = ConformerWav2Vec2EncoderLayer(
@@ -1083,11 +1083,11 @@ class TransformerEncoder(nn.Module):
                 args.conv_pos_groups,
             )
 
-        
+
         self.layers = nn.ModuleList(
                 [self.build_encoder_layer(args) for _ in range(args.encoder_layers)]
             )
-        
+
 
         self.layer_norm_first = args.layer_norm_first
         self.layer_norm = LayerNorm(self.embedding_dim)
@@ -1284,7 +1284,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
         activation_dropout: float = 0.1,
         activation_fn: str = "relu",
         layer_norm_first: bool = False,
-        using_adapter: bool = True,
+        using_adapter: bool = False,
         adapter_dim: int = 256,
         adapter_num: int = 12
     ) -> None:
@@ -1319,20 +1319,20 @@ class TransformerSentenceEncoderLayer(nn.Module):
         self.final_layer_norm = LayerNorm(self.embedding_dim)
 
         self.using_adapter = using_adapter
-        
-        self.adapter1 = nn.Sequential(
-                nn.Linear(self.embedding_dim, adapter_dim),
-                nn.GELU(),
-                nn.Linear(adapter_dim, self.embedding_dim),
-                LayerNorm(self.embedding_dim)
-            )
 
-        self.adapter2 = nn.Sequential(
-                nn.Linear(self.embedding_dim, adapter_dim),
-                nn.GELU(),
-                nn.Linear(adapter_dim, self.embedding_dim),
-                LayerNorm(self.embedding_dim)
-            )
+#         self.adapter1 = nn.Sequential(
+#                 nn.Linear(self.embedding_dim, adapter_dim),
+#                 nn.GELU(),
+#                 nn.Linear(adapter_dim, self.embedding_dim),
+#                 LayerNorm(self.embedding_dim)
+#             )
+
+#         self.adapter2 = nn.Sequential(
+#                 nn.Linear(self.embedding_dim, adapter_dim),
+#                 nn.GELU(),
+#                 nn.Linear(adapter_dim, self.embedding_dim),
+#                 LayerNorm(self.embedding_dim)
+#             )
 
     def forward(
         self,
@@ -1347,7 +1347,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
         modules similar to the original Transformer imlementation.
         """
         residual = x
-        self.using_adapter = True
+        self.using_adapter = False
         if not self.using_adapter:
             if self.layer_norm_first:
                 x = self.self_attn_layer_norm(x)
@@ -1413,7 +1413,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
                     x = self.dropout1(x)
 
                 # add adapter there
-                x = self.adapter1(x)
+                x = x + self.adapter1(x)
 
                 x = residual + x
 
@@ -1426,7 +1426,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
                     x = self.fc2(x)
 
                 # add adapter there
-                x = self.adapter2(x)
+                x = x + self.adapter2(x)
 
                 layer_result = x
 
@@ -1444,7 +1444,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
                     x = self.dropout1(x)
 
                 # add adapter there
-                x = self.adapter1(x)
+                x = x + self.adapter1(x)
                 x = residual + x
                 x = self.self_attn_layer_norm(x)
 
@@ -1454,9 +1454,9 @@ class TransformerSentenceEncoderLayer(nn.Module):
                     x = self.activation_fn(self.fc1(x))
                     x = self.dropout2(x)
                     x = self.fc2(x)
-                
+
                 # add adapter there
-                x = self.adapter2(x)
+                x = x + self.adapter2(x)
                 layer_result = x
 
                 x = self.dropout3(x)

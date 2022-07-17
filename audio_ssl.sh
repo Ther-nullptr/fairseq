@@ -16,12 +16,12 @@ cd ${work_dir}
 timestamp=`date +%Y-%m-%d-%H-%M`
 
 # !important setup wandb project
-wandb_project=data2vec_adapter_10min
+wandb_project=wav2vec_adapter_100h
 
 # stage 1: pretrain
 # stage 2: finetune
 # stage 3: decode
-stage=3
+stage=2
 
 # model_name need to be [wav2vec|hubert|data2vec]
 model_name=data2vec
@@ -263,7 +263,7 @@ if [ ${model_name} == "hubert" ]; then
         dataset.train_subset=${train_subset}  \
         dataset.valid_subset=${valid_subset} \
         hydra.run.dir=${output_dir} \
-        common.log_interval=10 
+        common.log_interval=10
     fi
 
 
@@ -407,7 +407,7 @@ if [ ${model_name} == "data2vec" ]; then
 
         # set pretrained model
         output_dir=${work_dir}/outputs/${model_name}/${exp_name}/${timestamp}
-        pretrain_model_name=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/audio_base_ls.pt
+        pretrain_model_name=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/wav2vec_small.pt
         # pretrain_model_name=${output_dir}/checkpoints/checkpoint_36_25000.pt
 
         # set finetune data
@@ -429,13 +429,8 @@ if [ ${model_name} == "data2vec" ]; then
         model.w2v_path=${pretrain_model_name} \
         hydra.run.dir=${finetune_output_dir} \
         common.log_interval=10 \
-        common.user_dir=examples/data2vec \
-        +criterion.wer_kenlm_model=${arpa_file} \
-        +criterion.wer_lexicon=${lexicon_file} \
-        +criterion.wer_lm_weight=2 \
-        +criterion.wer_word_score=-1 \
         common.wandb_project=${wandb_project} \
-        model.using_adapter=true 
+        model.using_adapter=true
 
     fi
 
@@ -454,11 +449,11 @@ if [ ${model_name} == "data2vec" ]; then
 
         # use lm
         use_kenlm=true
-        decode_data_type=dev-other
+        decode_data_type=dev-clean
 
         decode_data_path=/mnt/lustre/sjtu/home/xc915/superb/dataset/librispeech_finetuning_data/${decode_data_type}
         # decode_model_path=/userhome/user/chenxie95/github/fairseq/outputs/hubert/pretrained_models/checkpoint_best.pt
-        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/data2vec-finetune/audio_base_ls_10m.pt
+        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/data2vec_adapter100h.pt
 
         if ${use_kenlm}; then
             cd ${code_dir} && python3 examples/speech_recognition/new/infer.py \
@@ -511,4 +506,4 @@ fi
 #     --output /mnt/exp/project/NMT
 
 echo -e '\n'
-echo "finshed!" 
+echo "finshed!"

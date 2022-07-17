@@ -12,11 +12,11 @@ checkpoint:
 task:
   _name: audio_finetuning
   data: ???
-  normalize: false
+  normalize: true
   labels: ltr
 
 dataset:
-  num_workers: 6
+  num_workers: 0
   max_tokens: 3200000
   skip_invalid_size_inputs_valid_test: true
   valid_subset: valid

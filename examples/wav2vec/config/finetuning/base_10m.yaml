@@ -15,11 +15,11 @@ checkpoint:
 task:
   _name: audio_finetuning
   data: ???
-  normalize: true
+  normalize: false
   labels: ltr
 
 dataset:
-  num_workers: 6
+  num_workers: 0
   max_tokens: 3200000
   skip_invalid_size_inputs_valid_test: true
   validate_after_updates: 10000
@@ -28,7 +28,7 @@ dataset:
 
 distributed_training:
   ddp_backend: legacy_ddp
-  distributed_world_size: 2
+  distributed_world_size: 1
 
 criterion:
   _name: ctc
