@@ -470,6 +470,9 @@ def load_model_ensemble_and_task(
 
                 argspec = inspect.getfullargspec(task.build_model)
                 if "from_checkpoint" in argspec.args:
+                    # #! I must edit it for superb!
+                    # cfg.model.w2v_args = None
+                    # cfg.model.w2v_path = '/mnt/lustre/sjtu/home/xc915/superb/upstream_model/audio_base_ls.pt'
                     model = task.build_model(cfg.model, from_checkpoint=True)
                 else:
                     model = task.build_model(cfg.model)

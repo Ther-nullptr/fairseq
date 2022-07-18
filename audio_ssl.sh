@@ -16,7 +16,7 @@ cd ${work_dir}
 timestamp=`date +%Y-%m-%d-%H-%M`
 
 # !important setup wandb project
-wandb_project=wav2vec_adapter_100h
+wandb_project=hubert-finetune-100h
 
 # stage 1: pretrain
 # stage 2: finetune
@@ -24,7 +24,7 @@ wandb_project=wav2vec_adapter_100h
 stage=2
 
 # model_name need to be [wav2vec|hubert|data2vec]
-model_name=data2vec
+model_name=hubert
 
 # set working dir and output dir names
 work_dir=/mnt/lustre/sjtu/home/xc915/superb/wyj-fairseq # or /home
@@ -272,16 +272,16 @@ if [ ${model_name} == "hubert" ]; then
 
         # set finetune config
         config_finetune_dir=${work_dir}/examples/hubert/config/finetune
-        config_finetune_name=base_10h
+        config_finetune_name=base_100h
 
         # set pretrained model
         output_dir=${work_dir}/outputs/${model_name}/${exp_name}/
-        pretrain_model_name=/userhome/user/chenxie95/github/fairseq/outputs/hubert/pretrained_models/hubert_base_ls960.pt
+        pretrain_model_name=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/hubert_base.ls960.pt
         # pretrain_model_name=${output_dir}/checkpoints/checkpoint_36_25000.pt
 
         # set finetune data
-        finetune_data_mode=10h
-        finetune_data_path=/userhome/data/librispeech/librispeech_finetuning_data/${finetune_data_mode}
+        finetune_data_mode=100h
+        finetune_data_path=/mnt/lustre/sjtu/home/xc915/superb/dataset/librispeech_finetuning_data/${finetune_data_mode}
 
         # set finetune output model
         finetune_output_dir=${output_dir}/finetune_${finetune_data_mode}

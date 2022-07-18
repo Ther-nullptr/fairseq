@@ -46,6 +46,10 @@ def label_len_fn(label):
 class AudioFinetuningConfig(AudioPretrainingConfig):
     # Options for reporting WER metrics during validation. Only applicable to
     # Seq2Seq models during fine-tuning
+    cache_in_scratch: Any = field(
+        default=None,
+        metadata={"help": "cache in scratch"},
+    )
     eval_wer: bool = field(
         default=False, metadata={"help": "compute WER for Seq2Seq models"}
     )
