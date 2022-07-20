@@ -258,6 +258,7 @@ class HubertModel(BaseFairseqModel):
             mode=cfg.extractor_mode,
             conv_bias=cfg.conv_bias,
         )
+        
         feature_ds_rate = np.prod([s for _, _, s in feature_enc_layers])
         self.feat2tar_ratio = cfg.label_rate * feature_ds_rate / task_cfg.sample_rate
 
