@@ -33,7 +33,7 @@ class L0Module(Module):
         self.intermediate_size = config.intermediate_size 
         self.num_attention_heads = config.num_attention_heads
         self.mlp_num_per_layer = 1
-        self.dim_per_head = self.hidden_size // self.num_attention_heads #! 768 // 12 = 64
+        self.dim_per_head = self.hidden_size // self.num_attention_heads 
         self.num_hidden_layers = config.num_hidden_layers
         self.vocab_size = config.vocab_size
 
@@ -48,7 +48,7 @@ class L0Module(Module):
         self.full_model_size = (self.params_per_head_layer + self.params_per_mlp_layer) * self.num_hidden_layers
         self.prunable_model_size = 0 
 
-        self.temperature = temperature #! what is temperature
+        self.temperature = temperature
         self.droprate_init = droprate_init if droprate_init != 0. else 0.5
         
         self.types = []
@@ -69,18 +69,18 @@ class L0Module(Module):
 
         self.magical_number = magical_number
 
-        self.lambda_1 = torch.nn.Parameter(torch.tensor(0.0)) #! lambda 1 and lambda 2 are 0.0 at first
+        self.lambda_1 = torch.nn.Parameter(torch.tensor(0.0))
         self.lambda_2 = torch.nn.Parameter(torch.tensor(0.0))
 
         self.lagrangian_warmup = lagrangian_warmup
-        self.start_sparsity = start_sparsity #! 0
+        self.start_sparsity = start_sparsity
         self.target_sparsity = target_sparsity
 
         logger.info("********** Initializing L0 Module **********") 
         for type in self.types:
             logger.info(f"***** {type} *****")
-            logger.info(f"z_logas keys:{self.z_logas.keys()}")
-
+            logger.info(f"z.shape", self.z_logas[type].shape)
+            logger.info(f"size", self.sizes[type])
         logger.info(f"prunable model size: {self.prunable_model_size}")
 
     def set_lagrangian_warmup_steps(self, lagrangian_warmup):
@@ -111,7 +111,7 @@ class L0Module(Module):
             return Parameter(torch.Tensor(size))
 
     def initialize_hidden(self):
-        self.hidden_loga = self.initialize_parameters(self.hidden_size) #! [768]
+        self.hidden_loga = self.initialize_parameters(self.hidden_size)
         self.add_one_module(self.hidden_loga, type="hidden", 
                             parameter_per_dim=self.hidden_size * 4 + self.hidden_size * 4 * 2,
                             size=self.hidden_size, shape=[self.hidden_size])
@@ -119,7 +119,7 @@ class L0Module(Module):
         logger.info(f"Initialized hidden loga! Prunable_model_size = {self.prunable_model_size}")
 
     def initialize_structured_head(self, add_prunable_model_size=True):
-        self.head_loga = self.initialize_parameters(self.num_attention_heads, self.num_hidden_layers) #! [12,12]
+        self.head_loga = self.initialize_parameters(self.num_attention_heads, self.num_hidden_layers)
         self.reset_loga(self.head_loga, mean=10)
         self.add_one_module(self.head_loga, type="head", 
                             parameter_per_dim=self.params_per_head, size=self.num_attention_heads,
@@ -130,7 +130,7 @@ class L0Module(Module):
 
     def initialized_layer_structured_heads(self):
         n_layer = self.num_hidden_layers
-        self.headlayer_loga = self.initialize_parameters(n_layer) #! [12, 12]
+        self.headlayer_loga = self.initialize_parameters(n_layer)
         self.reset_loga(self.headlayer_loga, mean=10)
         self.add_one_module(self.headlayer_loga, type="head_layer", 
                             parameter_per_dim=self.params_per_head * self.num_attention_heads, size=1,
@@ -138,7 +138,7 @@ class L0Module(Module):
         logger.info(f"Initialized layerwise structured heads! Prunable_model_size = {self.prunable_model_size}")
 
     def initialize_structured_mlp(self):
-        self.int_loga = self.initialize_parameters(self.intermediate_size, self.num_hidden_layers) #! [12,3072]
+        self.int_loga = self.initialize_parameters(self.intermediate_size, self.num_hidden_layers)
 
         self.add_one_module(self.int_loga, type="intermediate", 
                             parameter_per_dim=self.params_per_intermediate_dim, size=self.intermediate_size,
@@ -161,7 +161,7 @@ class L0Module(Module):
     def reset_loga(self, tensor, mean=None):
         if mean is None:
             mean = math.log(1 - self.droprate_init) - math.log(self.droprate_init)
-        tensor.data.normal_(mean, 1e-2) #! normalization
+        tensor.data.normal_(mean, 1e-2)
 
     def reset_qz_logas(self):
         for key in self.z_logas:
@@ -279,14 +279,14 @@ class L0Module(Module):
         eps = Variable(eps)
         return eps
 
-    # during training #!!
+    # during training
     def _sample_z(self, loga):
         eps = self.get_eps(torch.FloatTensor(*loga.shape)).to(loga.device)
         z = self.quantile_concrete(eps, loga)
         z = F.hardtanh(z, min_val=0, max_val=1)
         return z
 
-    # during inference #!!
+    # during inference
     def _deterministic_z(self, size, loga):
         # Following https://github.com/asappresearch/flop/blob/e80e47155de83abbe7d90190e00d30bfb85c18d5/flop/hardconcrete.py#L8 line 103
         expected_num_nonzeros = torch.sum(1 - self.cdf_qz(0, loga))
@@ -357,8 +357,8 @@ class L0Module(Module):
 
     def forward(self, training=True,):
         zs = {f"{type}_z": [] for type in self.types}
+
         if training:
-            logger.info(f'z_logas:{self.z_logas.keys()}')
             for i, type in enumerate(self.types):
                 loga = self.z_logas[type]
                 z = self._sample_z(loga)
