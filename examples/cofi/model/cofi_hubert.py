@@ -255,7 +255,7 @@ class CoFiHubertConfig(Wav2Vec2Config):
 
 
 @register_model("hubert_cofi", dataclass=CoFiHubertConfig)
-class CoFiHubertModel(BaseFairseqModel,ModuleUtilsMixin): # top module
+class CoFiHubertModel(BaseFairseqModel, ModuleUtilsMixin): # top module
     def __init__(self, cfg):
         super().__init__()
         self.encoder = CoFiTransformerEncoder(cfg)
@@ -289,7 +289,8 @@ class CoFiHubertModel(BaseFairseqModel,ModuleUtilsMixin): # top module
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
         if attention_mask is None:
-            attention_mask = torch.ones(post_proj_shape, device=device)
+            attention_mask = torch.ones((int(post_proj_shape[0]), 1, int(post_proj_shape[1])), device=device)
+            # according to the debug result of cofi
 
         extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask, post_proj_shape, device)
         print(extended_attention_mask.shape)
@@ -304,7 +305,7 @@ class CoFiHubertModel(BaseFairseqModel,ModuleUtilsMixin): # top module
             head_layer_z=head_layer_z,
             hidden_z=hidden_z
         )
-
+        print(encoder_outputs)
         sequence_output = encoder_outputs[0]
         pooled_output = sequence_output
         return (sequence_output, pooled_output) + encoder_outputs[1:]
@@ -355,6 +356,7 @@ class CoFiBertLayer(nn.Module):
         super().__init__()
         self.attention = CoFiMultiheadAttention(cfg)
         self.output = CoFiOutput(cfg)
+        self.intermediate = CoFiIntermediate(cfg)
         self.cfg = cfg
 
     def forward(
@@ -388,7 +390,7 @@ class CoFiBertLayer(nn.Module):
         self.mlp_z = mlp_z
         self.hidden_z = hidden_z
         layer_output = apply_chunking_to_forward(
-            self.feed_forward_chunk, self.chunk_size_feed_forward, self.seq_len_dim, attention_output
+            self.feed_forward_chunk, 0, 1, attention_output
         )
         outputs = (layer_output,) + outputs + (attention_output, )
         return outputs
@@ -516,6 +518,7 @@ class CoFiSelfAttention(nn.Module):
             math.sqrt(self.attention_head_size)
 
         if attention_mask is not None:
+            print(attention_scores.shape , attention_mask.shape)
             attention_scores = attention_scores + attention_mask
 
         attention_probs = nn.Softmax(dim=-1)(attention_scores)
@@ -546,6 +549,17 @@ class CoFiPostProj(nn.Module):
         if hidden_z is not None:
             post_proj_output = post_proj_output.mul(hidden_z)
         return post_proj_output
+
+class CoFiIntermediate(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.dense = nn.Linear(cfg.hidden_size, cfg.intermediate_size)
+        self.intermediate_act_fn = nn.functional.relu
+
+    def forward(self, hidden_states):
+        hidden_states = self.dense(hidden_states)
+        hidden_states = self.intermediate_act_fn(hidden_states)
+        return hidden_states
 
 
 class CoFiOutput(nn.Module): # 3072 -> 768
