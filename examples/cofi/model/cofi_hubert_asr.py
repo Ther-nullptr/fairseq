@@ -37,17 +37,20 @@ from transformers.models.bert.modeling_bert import BertForSequenceClassification
 from .cofi_hubert import *
 from .l0_module import *
 from ..utils.cofi_utils import *
-from ..utils.utils import *
 
-logger = logging.getLogger(__name__)
+logger = logging.get_logger(__name__)
 
 @dataclass
 class CoFiHubertTeaStuConfig(CoFiHubertConfig):
-    model_path: str = field(default=None, metadata={"help": "the path to finetuned hubert model"})
-    save_best_path: str = field(default=None, metadata={"help": "the path to save l0 and zs"})
+    model_path: Optional[str] = field(default=None, metadata={"help": "the path to finetuned hubert model"})
+    save_best_path: Optional[str] = field(default=None, metadata={"help": "the path to save l0 and zs"})
+    label_dir:  Optional[str] = field(default=None, metadata={"help": "label dir"})
     prepruning_finetune_steps: int = field(default=10000, metadata={"help": "prepruning finetune steps"})
     hidden_size: int = field(default=768, metadata={"help": "prepruning finetune steps"})
+    vocab_size: int = field(default=32, metadata={"help": "vocab size"})
     do_layer_distill: bool = field(default=True, metadata={"help": "do layer distill"})
+    is_decoder: bool = field(default=False, metadata={"help": "is decoder"})
+    add_cross_attention: bool = field(default=False, metadata={"help": "add cross attention"})
 
 @register_model("cofi_hubert_tea_stu", dataclass=CoFiHubertTeaStuConfig)
 class CoFiHubertTeaStu(BaseFairseqModel):
@@ -56,12 +59,11 @@ class CoFiHubertTeaStu(BaseFairseqModel):
         self.cfg = cfg
         self.student_model = student_model
         self.teacher_model = copy.deepcopy(student_model)
-        self.l0_module = L0Module()
+        self.l0_module = L0Module(cfg)
         self.start_prune = False
         self.steps = 0
         self.save_best_path = cfg.save_best_path
         self.prepruning_finetune_steps = cfg.prepruning_finetune_steps
-        self.layer_transformation = nn.Linear(cfg.hidden_size, cfg.hidden_size)
         logger.info('initialize the layer transformation')
         initialize_layer_transformation(student_model)
         logger.info(self.student_model)
@@ -72,52 +74,53 @@ class CoFiHubertTeaStu(BaseFairseqModel):
         return state_dict
 
     @classmethod
-    def build_model(cls, cfg: CoFiHubertTeaStuConfig):
+    def build_model(cls, cfg: CoFiHubertTeaStuConfig, task):
         student_model = CoFiHubertForASR(cfg)
         # load model with local finetuned-model
         logger.info('load finetuned model of hubert')
         ft_hubert_model = torch.load(cfg.model_path)
         ft_hubert_model = ft_hubert_model['model']
+        print(ft_hubert_model.keys())
         logger.info('copy params to cofi')
         # feature_extractor
         logger.info('initial feature extractor')
         state_dict = student_model.state_dict()
-        state_dict['w2v_model.feature_extractor.conv_layers.0.0.weight'] = ft_hubert_model['feature_extractor.conv_layers.0.0.weight']
-        state_dict['w2v_model.feature_extractor.conv_layers.0.2.weight'] = ft_hubert_model['feature_extractor.conv_layers.0.2.weight']
-        state_dict['w2v_model.feature_extractor.conv_layers.0.2.bias'] = ft_hubert_model['feature_extractor.conv_layers.0.2.bias']
+        state_dict['w2v_model.feature_extractor.conv_layers.0.0.weight'] = ft_hubert_model['w2v_encoder.w2v_model.feature_extractor.conv_layers.0.0.weight']
+        state_dict['w2v_model.feature_extractor.conv_layers.0.2.weight'] = ft_hubert_model['w2v_encoder.w2v_model.feature_extractor.conv_layers.0.2.weight']
+        state_dict['w2v_model.feature_extractor.conv_layers.0.2.bias'] = ft_hubert_model['w2v_encoder.w2v_model.feature_extractor.conv_layers.0.2.bias']
         for i in range (1,7):
-            state_dict[f'w2v_model.feature_extractor.conv_layers.{i}.0.weight'] = ft_hubert_model[f'feature_extractor.conv_layers.{i}.0.weight']
+            state_dict[f'w2v_model.feature_extractor.conv_layers.{i}.0.weight'] = ft_hubert_model[f'w2v_encoder.w2v_model.feature_extractor.conv_layers.{i}.0.weight']
         # post proj
         logger.info('initial post proj')
-        state_dict['w2v_model.post_proj.weight'] = ft_hubert_model['post_extract_proj.weight']
-        state_dict['w2v_model.post_proj.bias'] = ft_hubert_model['post_extract_proj.bias']
+        state_dict['w2v_model.post_proj.weight'] = ft_hubert_model['w2v_encoder.w2v_model.post_extract_proj.weight']
+        state_dict['w2v_model.post_proj.bias'] = ft_hubert_model['w2v_encoder.w2v_model.post_extract_proj.bias']
         # encoder
         logger.info('initial encoder')
         for i in range (0,12):
-            state_dict[f'w2v_model.encoder.layer.{i}.attention.self.key.weight'] = ft_hubert_model[f'encoder.layers.{i}.self_attn.k_proj.weight']
-            state_dict[f'w2v_model.encoder.layer.{i}.attention.self.query.weight'] = ft_hubert_model[f'encoder.layers.{i}.self_attn.q_proj.weight']
-            state_dict[f'w2v_model.encoder.layer.{i}.attention.self.value.weight'] = ft_hubert_model[f'encoder.layers.{i}.self_attn.v_proj.weight']
-            state_dict[f'w2v_model.encoder.layer.{i}.attention.self.key.bias'] = ft_hubert_model[f'encoder.layers.{i}.self_attn.k_proj.bias']
-            state_dict[f'w2v_model.encoder.layer.{i}.attention.self.query.bias'] = ft_hubert_model[f'encoder.layers.{i}.self_attn.q_proj.bias']
-            state_dict[f'w2v_model.encoder.layer.{i}.attention.self.value.bias'] = ft_hubert_model[f'encoder.layers.{i}.self_attn.v_proj.bias']
-            state_dict[f'w2v_model.encoder.layer.{i}.attention.output.dense.weight'] = ft_hubert_model[f'encoder.layers.{i}.self_attn.out_proj.weight']
-            state_dict[f'w2v_model.encoder.layer.{i}.attention.output.dense.bias'] = ft_hubert_model[f'encoder.layers.{i}.self_attn.out_proj.bias']
-            state_dict[f'w2v_model.encoder.layer.{i}.attention.output.LayerNorm.weight'] = ft_hubert_model[f'encoder.layers.{i}.self_attn_layer_norm.weight']
-            state_dict[f'w2v_model.encoder.layer.{i}.attention.output.LayerNorm.bias'] = ft_hubert_model[f'encoder.layers.{i}.self_attn_layer_norm.bias']
-            state_dict[f'w2v_model.encoder.layer.{i}.intermediate.dense.weight'] = ft_hubert_model[f'encoder.layers.{i}.fc1.weight']
-            state_dict[f'w2v_model.encoder.layer.{i}.intermediate.dense.bias'] = ft_hubert_model[f'encoder.layers.{i}.fc1.bias']
-            state_dict[f'w2v_model.encoder.layer.{i}.output.dense.weight'] = ft_hubert_model[f'encoder.layers.{i}.fc2.weight']
-            state_dict[f'w2v_model.encoder.layer.{i}.output.dense.bias'] = ft_hubert_model[f'encoder.layers.{i}.fc2.bias']
-            state_dict[f'w2v_model.encoder.layer.{i}.output.LayerNorm.weight'] = ft_hubert_model[f'encoder.layers.{i}.final_layer_norm.weight']
-            state_dict[f'w2v_model.encoder.layer.{i}.output.LayerNorm.bias'] = ft_hubert_model[f'encoder.layers.{i}.final_layer_norm.bias']
+            state_dict[f'w2v_model.encoder.layer.{i}.attention.self.key.weight'] = ft_hubert_model[f'w2v_encoder.w2v_model.encoder.layers.{i}.self_attn.k_proj.weight']
+            state_dict[f'w2v_model.encoder.layer.{i}.attention.self.query.weight'] = ft_hubert_model[f'w2v_encoder.w2v_model.encoder.layers.{i}.self_attn.q_proj.weight']
+            state_dict[f'w2v_model.encoder.layer.{i}.attention.self.value.weight'] = ft_hubert_model[f'w2v_encoder.w2v_model.encoder.layers.{i}.self_attn.v_proj.weight']
+            state_dict[f'w2v_model.encoder.layer.{i}.attention.self.key.bias'] = ft_hubert_model[f'w2v_encoder.w2v_model.encoder.layers.{i}.self_attn.k_proj.bias']
+            state_dict[f'w2v_model.encoder.layer.{i}.attention.self.query.bias'] = ft_hubert_model[f'w2v_encoder.w2v_model.encoder.layers.{i}.self_attn.q_proj.bias']
+            state_dict[f'w2v_model.encoder.layer.{i}.attention.self.value.bias'] = ft_hubert_model[f'w2v_encoder.w2v_model.encoder.layers.{i}.self_attn.v_proj.bias']
+            state_dict[f'w2v_model.encoder.layer.{i}.attention.output.dense.weight'] = ft_hubert_model[f'w2v_encoder.w2v_model.encoder.layers.{i}.self_attn.out_proj.weight']
+            state_dict[f'w2v_model.encoder.layer.{i}.attention.output.dense.bias'] = ft_hubert_model[f'w2v_encoder.w2v_model.encoder.layers.{i}.self_attn.out_proj.bias']
+            state_dict[f'w2v_model.encoder.layer.{i}.attention.output.LayerNorm.weight'] = ft_hubert_model[f'w2v_encoder.w2v_model.encoder.layers.{i}.self_attn_layer_norm.weight']
+            state_dict[f'w2v_model.encoder.layer.{i}.attention.output.LayerNorm.bias'] = ft_hubert_model[f'w2v_encoder.w2v_model.encoder.layers.{i}.self_attn_layer_norm.bias']
+            state_dict[f'w2v_model.encoder.layer.{i}.intermediate.dense.weight'] = ft_hubert_model[f'w2v_encoder.w2v_model.encoder.layers.{i}.fc1.weight']
+            state_dict[f'w2v_model.encoder.layer.{i}.intermediate.dense.bias'] = ft_hubert_model[f'w2v_encoder.w2v_model.encoder.layers.{i}.fc1.bias']
+            state_dict[f'w2v_model.encoder.layer.{i}.output.dense.weight'] = ft_hubert_model[f'w2v_encoder.w2v_model.encoder.layers.{i}.fc2.weight']
+            state_dict[f'w2v_model.encoder.layer.{i}.output.dense.bias'] = ft_hubert_model[f'w2v_encoder.w2v_model.encoder.layers.{i}.fc2.bias']
+            state_dict[f'w2v_model.encoder.layer.{i}.output.LayerNorm.weight'] = ft_hubert_model[f'w2v_encoder.w2v_model.encoder.layers.{i}.final_layer_norm.weight']
+            state_dict[f'w2v_model.encoder.layer.{i}.output.LayerNorm.bias'] = ft_hubert_model[f'w2v_encoder.w2v_model.encoder.layers.{i}.final_layer_norm.bias']
         # final_proj
         logger.info('initial final proj')
-        state_dict['proj.weight'] = ft_hubert_model[f'final_proj.weight']
-        state_dict['proj.bias'] = ft_hubert_model[f'final_proj.bias']
+        state_dict['proj.weight'] = ft_hubert_model[f'w2v_encoder.proj.weight']
+        state_dict['proj.bias'] = ft_hubert_model[f'w2v_encoder.proj.bias']
         return cls(cfg, student_model)
 
     def forward(self, inputs):
-        input['input_raw_data'] = inputs['net_input']['source']
+        inputs['inputs'] = inputs['net_input']['source']
         if (self.steps >= self.prepruning_finetune_steps):
             self.start_prune = True
         if (self.start_prune):
@@ -131,10 +134,10 @@ class CoFiHubertTeaStu(BaseFairseqModel):
             with torch.no_grad():
                 # only retain inputs of certain keys
                 # ['id', 'net_input', 'target_lengths', 'ntokens', 'target']
-                teacher_inputs_keys = ["input_raw_data"]
+                teacher_inputs_keys = ["inputs"]
                 teacher_inputs = {key: inputs[key] for key in teacher_inputs_keys if key in inputs}
                 teacher_outputs = self.teacher_model(**teacher_inputs)
-            student_outputs = self.student_model(**inputs) #! get the two outputs
+            student_outputs = self.student_model(inputs['inputs']) #! get the two outputs
         
         zs = {key: inputs[key] for key in inputs if "_z" in key}
         self.steps += 1
@@ -151,12 +154,14 @@ class CoFiHubertTeaStu(BaseFairseqModel):
 
 class CoFiHubertForASR(nn.Module):
     def __init__(self, cfg:CoFiHubertConfig):
+        super().__init__()
         self.w2v_model = CoFiHubertModel(cfg)
         self.proj = CoFiLinear(cfg.hidden_size, 32)
+        self.layer_transformation = nn.Linear(cfg.hidden_size, cfg.hidden_size)
 
     def forward(self, inputs):
         loss = None
-        last_hidden_state, pooled_output, hidden_states, attentions = self.w2v_model(**inputs)
+        last_hidden_state, pooled_output, hidden_states, attentions = self.w2v_model(inputs)
         result = self.proj(last_hidden_state)
         return (loss, result, hidden_states, attentions)
 

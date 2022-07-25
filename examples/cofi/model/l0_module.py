@@ -10,9 +10,9 @@ from torch.nn.modules import Module
 from torch.nn.parameter import Parameter
 from torch.autograd import Variable
 from transformers.utils import logging
+logger = logging.get_logger(__name__)
 
 limit_a, limit_b, epsilon = -.1, 1.1, 1e-6
-logger = logging.get_logger(__name__)
 
 class L0Module(Module):
     def __init__(self,

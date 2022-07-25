@@ -51,7 +51,7 @@ class Wav2Vec2Config(FairseqDataclass):
         },
     )
     encoder_layers: int = field(
-        default=12, metadata={"help": "num encoder layers in the transformer"}
+        default=2, metadata={"help": "num encoder layers in the transformer"}
     )
     encoder_embed_dim: int = field(
         default=768, metadata={"help": "encoder embedding dimension"}

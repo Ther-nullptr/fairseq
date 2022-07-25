@@ -71,6 +71,7 @@ class CoFiCriterionConfig(FairseqDataclass):
 @register_criterion("cofi_loss", dataclass=CoFiCriterionConfig)
 class CoFiCriterion(FairseqCriterion):
     def __init__(self, cfg: CoFiCriterionConfig, task: FairseqTask):
+        super().__init__(task)
         self.steps = 0
         self.start_prune = False
         self.prepruning_finetune_steps = cfg.prepruning_finetune_steps
@@ -82,8 +83,8 @@ class CoFiCriterion(FairseqCriterion):
         self.layer_distill_version = cfg.layer_distill_version
         logger.info('initial CoFiCriterion')
 
-    def forward(self, sample, model):
-        teacher_outputs, student_outputs, zs = model(**sample)
+    def forward(self, model, sample):
+        teacher_outputs, student_outputs, zs = model(sample)
         distill_loss = None
         distill_ce_loss = None
         distill_loss, distill_ce_loss, loss = self.calculate_distillation_loss(teacher_outputs, student_outputs, zs)

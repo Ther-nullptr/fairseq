@@ -5,7 +5,7 @@ from transformers.modeling_utils import prune_linear_layer
 from transformers import AutoConfig, BertForSequenceClassification
 from transformers.file_utils import hf_bucket_url, cached_path
 
-from utils.utils import calculate_parameters
+from .utils import calculate_parameters
 
 def edit_config(config, additional_args):
     config.transform_embedding = additional_args.transform_embedding

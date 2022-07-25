@@ -40,7 +40,6 @@ dataset:
 
 criterion:
   _name: cofi_loss
-  zero_infinity: true
 
 optimization:
   max_update: 80000
@@ -62,7 +61,8 @@ lr_scheduler:
 
 model:
   _name: cofi_hubert_tea_stu
-  model_path: 
+  model_path: /mnt/lustre/sjtu/home/xc915/superb/wyj-fairseq/outputs/hubert/libri960h_base/finetune_100h/checkpoints/checkpoint_best.pt
+  save_best_path: /mnt/lustre/sjtu/home/xc915/superb/wyj-fairseq/prune
 
 hydra:
   job:
@@ -81,6 +81,3 @@ hydra:
           - criterion.wer_lexicon
   run:
     dir: ???
-  sweep:
-    dir: ???
-    subdir: ${hydra.job.config_name}__${hydra.job.override_dirname}
