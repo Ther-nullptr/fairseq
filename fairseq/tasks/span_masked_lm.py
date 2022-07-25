@@ -6,7 +6,7 @@
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Optional
 
 import numpy as np
 from omegaconf import II, MISSING
@@ -14,7 +14,6 @@ from omegaconf import II, MISSING
 from fairseq import utils
 from fairseq.data import (
     AppendTokenDataset,
-    DenoisingDataset,
     Dictionary,
     IdDataset,
     NestedDictionaryDataset,
@@ -25,8 +24,8 @@ from fairseq.data import (
     TokenBlockDataset,
     data_utils,
 )
-from fairseq.data.encoders.utils import get_whole_word_mask
 from fairseq.data.shorten_dataset import maybe_shorten_dataset
+from fairseq.data.span_mask_tokens_dataset import SpanMaskedTokensDataset
 from fairseq.dataclass import ChoiceEnum, FairseqDataclass
 from fairseq.tasks import FairseqTask, register_task
 
@@ -36,28 +35,30 @@ logger = logging.getLogger(__name__)
 
 SAMPLE_BREAK_MODE_CHOICES = ChoiceEnum(["none", "complete", "complete_doc", "eos"])
 SHORTEN_METHOD_CHOICES = ChoiceEnum(["none", "truncate", "random_crop"])
-MASK_LENGTH_CHOICES = ChoiceEnum(["subword", "word", "span-poisson"])
 
 
 @dataclass
-class DenoisingConfig(FairseqDataclass):
+class SpanMaskedLMConfig(FairseqDataclass):
+    shuffle: bool = field(
+        default=False,
+    )
+    noise_density: float = field(
+        default=0.15,
+        metadata={"help": "What fraction of the tokens to select as noise"},
+    )
+    mean_noise_span_length: float = field(
+        default=3,
+        metadata={"help": "Mean noise span length, must be >= 1"},
+    )
     data: str = field(
         default=MISSING,
-        metadata={"help": "path to data directory"},
-    )
-    bpe: Optional[str] = field(
-        default=None,
-        metadata={"help": "TODO"},
-    )
-    tokens_per_sample: int = field(
-        default=512,
         metadata={
-            "help": "max number of total tokens over all segments "
-            "per sample for dataset"
+            "help": "colon separated path to data directories list, "
+            "will be iterated upon during epochs in round-robin manner"
         },
     )
     sample_break_mode: SAMPLE_BREAK_MODE_CHOICES = field(
-        default="complete_doc",
+        default="none",
         metadata={
             "help": 'If omitted or "none", fills each sample with tokens-per-sample '
             'tokens. If set to "complete", splits samples only at the end '
@@ -66,49 +67,10 @@ class DenoisingConfig(FairseqDataclass):
             'If set to "eos", includes only one sentence per sample.'
         },
     )
-    replace_length: int = field(
-        default=0,
-        metadata={"help": "TODO, should only allow -1, 0 and 1"},
+    tokens_per_sample: int = field(
+        default=1024,
+        metadata={"help": "max number of tokens per sample for LM dataset"},
     )
-    mask: float = field(
-        default=0.0,
-        metadata={"help": "fraction of words/subwords that will be masked"},
-    )
-    mask_random: float = field(
-        default=0.0,
-        metadata={"help": "instead of using [MASK], use random token this often"},
-    )
-    insert: float = field(
-        default=0.0,
-        metadata={"help": "insert this percentage of additional random tokens"},
-    )
-    permute: float = field(
-        default=0.0,
-        metadata={"help": "take this proportion of subwords and permute them"},
-    )
-    rotate: float = field(
-        default=0.5,
-        metadata={"help": "rotate this proportion of inputs"},
-    )
-    poisson_lambda: float = field(
-        default=3.0,
-        metadata={"help": "randomly shuffle sentences for this proportion of inputs"},
-    )
-    shuffle_instance: float = field(
-        default=0.0,
-        metadata={"help": "shuffle this proportion of sentences in all inputs"},
-    )
-    mask_length: MASK_LENGTH_CHOICES = field(
-        default="subword",
-        metadata={"help": "mask length to choose"},
-    )
-    permute_sentences: int = field(
-        default=-1,
-        metadata={
-            "help": "when masking N tokens, replace with 0, 1, or N tokens (use -1 for N)"
-        },
-    )
-    seed: int = II("common.seed")
     shorten_method: SHORTEN_METHOD_CHOICES = field(
         default="none",
         metadata={
@@ -122,43 +84,45 @@ class DenoisingConfig(FairseqDataclass):
             'e.g., "train,valid" (default: all dataset splits)'
         },
     )
-    max_source_positions: int = field(
-        default=1024,
-        metadata={"help": "max number of tokens in the source sequence"},
-    )
-    max_target_positions: int = field(
-        default=1024,
-        metadata={"help": "max number of tokens in the target sequence"},
-    )
+    seed: int = II("common.seed")
     dataset_impl: Optional[ChoiceEnum(get_available_dataset_impl())] = II(
         "dataset.dataset_impl"
     )
+    max_source_positions: int = field(
+        default=1024, metadata={"help": "max number of tokens in the source sequence"}
+    )
+    max_target_positions: int = field(
+        default=1024, metadata={"help": "max number of tokens in the target sequence"}
+    )
+    include_target_tokens: bool = field(
+        default=False,
+        metadata={
+            "help": "include target tokens in model input. this is used for data2vec"
+        },
+    )
 
 
-@register_task("denoising", dataclass=DenoisingConfig)
-class DenoisingTask(FairseqTask):
+@register_task("span_masked_lm", dataclass=SpanMaskedLMConfig)
+class SpanMaskedLMTask(FairseqTask):
     """
-    Denoising task for applying sequence to sequence denoising. (ie. BART)
+    Span masked language modeling task. (ie. T5)
     """
 
-    cfg: DenoisingConfig
+    cfg: SpanMaskedLMConfig
 
     def __init__(self, cfg, dictionary):
         super().__init__(cfg)
         self.dictionary = dictionary
 
-        # add mask token
-        self.mask_idx = self.dictionary.add_symbol("<mask>")
-
     @classmethod
-    def setup_task(cls, cfg: DenoisingConfig, **kwargs):
+    def setup_task(cls, cfg: SpanMaskedLMConfig, **kwargs):
         """Setup the task."""
         paths = utils.split_paths(cfg.data)
         assert len(paths) > 0
         dictionary = Dictionary.load(os.path.join(paths[0], "dict.txt"))
         logger.info("dictionary: {} types".format(len(dictionary)))
-        if not hasattr(cfg, "shuffle_instance"):
-            cfg.shuffle_instance = False
+        if not hasattr(cfg, "shuffle"):
+            cfg.shuffle = False
         return cls(cfg, dictionary)
 
     def _load_dataset_split(self, split, epoch, combine):
@@ -193,8 +157,7 @@ class DenoisingTask(FairseqTask):
         dataset = TokenBlockDataset(
             dataset,
             dataset.sizes,
-            self.cfg.tokens_per_sample - 2,
-            # one less for <s> and one for </s>
+            self.cfg.tokens_per_sample - 2,  # one less for <s> and one for </s>
             pad=self.dictionary.pad(),
             eos=self.dictionary.eos(),
             break_mode=self.cfg.sample_break_mode,
@@ -215,32 +178,16 @@ class DenoisingTask(FairseqTask):
         """
         dataset = self._load_dataset_split(split, epoch, combine)
 
-        mask_whole_words = (
-            get_whole_word_mask(self.cfg.bpe, self.source_dictionary)
-            if self.cfg.mask_length != "subword"
-            else None
-        )
-
-        self.datasets[split] = DenoisingDataset(
+        self.datasets[split] = SpanMaskedTokensDataset(
             dataset,
-            dataset.sizes,
             self.dictionary,
-            self.mask_idx,
-            mask_whole_words,
-            shuffle=self.cfg.shuffle_instance,
+            noise_density=self.cfg.noise_density,
+            mean_noise_span_length=self.cfg.mean_noise_span_length,
+            shuffle=self.cfg.shuffle,
             seed=self.cfg.seed,
-            mask=self.cfg.mask,
-            mask_random=self.cfg.mask_random,
-            insert=self.cfg.insert,
-            rotate=self.cfg.rotate,
-            permute_sentences=self.cfg.permute_sentences,
-            bpe=self.cfg.bpe,
-            replace_length=self.cfg.replace_length,
-            mask_length=self.cfg.mask_length,
-            poisson_lambda=self.cfg.poisson_lambda,
         )
         logger.info(
-            "Split: {0}, Loaded {1} samples of denoising_dataset".format(
+            "Split: {0}, Loaded {1} samples of span_masked_tokens_dataset".format(
                 split,
                 len(self.datasets[split]),
             )

@@ -87,7 +87,7 @@ class CoFiCriterion(FairseqCriterion):
         teacher_outputs, student_outputs, zs = model(sample)
         distill_loss = None
         distill_ce_loss = None
-        distill_loss, distill_ce_loss, loss = self.calculate_distillation_loss(teacher_outputs, student_outputs, zs)
+        distill_loss, distill_ce_loss, loss = self.calculate_distillation_loss(model, teacher_outputs, student_outputs, zs)
 
         if (self.steps >= self.prepruning_finetune_steps):
             self.start_prune = True
@@ -134,7 +134,7 @@ class CoFiCriterion(FairseqCriterion):
 
         return distill_loss, ce_distill_loss, loss
 
-    def calculate_layer_distillation_loss(self, teacher_outputs, student_outputs, zs):
+    def calculate_layer_distillation_loss(self, model, teacher_outputs, student_outputs, zs):
         mse_loss = torch.nn.MSELoss(reduction="mean")
         if self.do_layer_distill: #! only do layer distill
             mlp_z = None
@@ -150,7 +150,7 @@ class CoFiCriterion(FairseqCriterion):
             # distilliting existing layers
             if self.layer_distill_version == 2:
                 for layer_num, (t_layer_o, s_layer_o) in enumerate(zip(teacher_layer_output, student_layer_output)):
-                    s_layer_o = self.model.layer_transformation(s_layer_o)
+                    s_layer_o = model.layer_transformation(s_layer_o)
                     l = mse_loss(t_layer_o, s_layer_o)
                     if mlp_z[layer_num] > 0:
                         layer_loss += l
@@ -159,7 +159,7 @@ class CoFiCriterion(FairseqCriterion):
             elif self.layer_distill_version > 2:
                 l = []
                 specified_teacher_layers = [2, 5, 8, 11]
-                transformed_s_layer_o = [self.model.layer_transformation(
+                transformed_s_layer_o = [model.layer_transformation(
                     s_layer_o) for s_layer_o in student_layer_output]
                 specified_teacher_layer_reps = [
                     teacher_layer_output[i] for i in specified_teacher_layers] #! teacher: 4x[32,113,768]

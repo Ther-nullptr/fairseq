@@ -271,8 +271,8 @@ class CoFiHubertModel(BaseFairseqModel, ModuleUtilsMixin): # top module
         self,
         input_raw_data=None,
         attention_mask=None,
-        output_attentions=None,
-        output_hidden_states=None,
+        output_attentions=True,
+        output_hidden_states=True,
         head_layer_z=None,
         head_z=None,
         intermediate_z=None,
@@ -285,7 +285,6 @@ class CoFiHubertModel(BaseFairseqModel, ModuleUtilsMixin): # top module
         feature_extractor_output = feature_extractor_output.transpose(1, 2)
         post_proj_output = self.post_proj(feature_extractor_output, hidden_z)
         post_proj_shape = post_proj_output.size()
-        print(post_proj_shape)
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
         if attention_mask is None:
@@ -293,7 +292,6 @@ class CoFiHubertModel(BaseFairseqModel, ModuleUtilsMixin): # top module
             # according to the debug result of cofi
 
         extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask, post_proj_shape, device)
-        print(extended_attention_mask.shape)
         encoder_outputs = self.encoder(
             post_proj_output,
             attention_mask=extended_attention_mask,
@@ -305,7 +303,6 @@ class CoFiHubertModel(BaseFairseqModel, ModuleUtilsMixin): # top module
             head_layer_z=head_layer_z,
             hidden_z=hidden_z
         )
-        print(encoder_outputs)
         sequence_output = encoder_outputs[0]
         pooled_output = sequence_output
         return (sequence_output, pooled_output) + encoder_outputs[1:]
@@ -319,8 +316,8 @@ class CoFiTransformerEncoder(nn.Module):
         self,
         hidden_states,
         attention_mask=None,
-        output_attentions=False,
-        output_hidden_states=False,
+        output_attentions=True,
+        output_hidden_states=True,
         head_z=None,
         head_layer_z=None,
         intermediate_z=None,
@@ -363,7 +360,7 @@ class CoFiBertLayer(nn.Module):
         self,
         hidden_states,
         attention_mask=None,
-        output_attentions=False,
+        output_attentions=True,
         head_z=None,
         head_layer_z=None,
         intermediate_z=None,
@@ -443,7 +440,7 @@ class CoFiMultiheadAttention(nn.Module):
         self,
         hidden_states,
         attention_mask=None,
-        output_attentions=False,
+        output_attentions=True,
         head_z=None,
         head_layer_z=None,
         hidden_z=None
@@ -489,7 +486,7 @@ class CoFiSelfAttention(nn.Module):
     def forward(self,
                 hidden_states,
                 attention_mask=None,
-                output_attentions=False,
+                output_attentions=True,
                 head_z=None):
         if self.value is None:
             return (None, None) if output_attentions else (None,)
@@ -518,7 +515,6 @@ class CoFiSelfAttention(nn.Module):
             math.sqrt(self.attention_head_size)
 
         if attention_mask is not None:
-            print(attention_scores.shape , attention_mask.shape)
             attention_scores = attention_scores + attention_mask
 
         attention_probs = nn.Softmax(dim=-1)(attention_scores)
@@ -542,7 +538,7 @@ class CoFiSelfAttention(nn.Module):
 class CoFiPostProj(nn.Module):
     def __init__(self,cfg):
         super().__init__()
-        self.dense = nn.Linear(512,768)
+        self.dense = nn.Linear(cfg.feature_extractor_dim, cfg.hidden_size)
 
     def forward(self, feature_extractor_output, hidden_z):
         post_proj_output = self.dense(feature_extractor_output)
