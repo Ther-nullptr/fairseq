@@ -253,12 +253,12 @@ class CoFiHubertConfig(Wav2Vec2Config):
     )
     fp16: bool = field(default=False, metadata={"help": "If fp16 is being used"})
 
-
 @register_model("hubert_cofi", dataclass=CoFiHubertConfig)
 class CoFiHubertModel(BaseFairseqModel, ModuleUtilsMixin): # top module
     def __init__(self, cfg):
         super().__init__()
         self.encoder = CoFiTransformerEncoder(cfg)
+        self.pooler = CoFiPooler(cfg)
         self.post_proj = CoFiPostProj(cfg)
         self.feature_extractor = ConvFeatureExtractionModel(
             conv_layers=eval(cfg.conv_feature_layers),
@@ -304,8 +304,24 @@ class CoFiHubertModel(BaseFairseqModel, ModuleUtilsMixin): # top module
             hidden_z=hidden_z
         )
         sequence_output = encoder_outputs[0]
-        pooled_output = sequence_output
+        pooled_output = self.pooler(sequence_output)
         return (sequence_output, pooled_output) + encoder_outputs[1:]
+
+
+class CoFiPooler(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.dense = nn.Linear(cfg.hidden_size, cfg.hidden_size)
+        self.activation = nn.Tanh()
+
+    def forward(self, hidden_states):
+        # We "pool" the model by simply taking the hidden state corresponding
+        # to the first token.
+        first_token_tensor = hidden_states[:, 0]
+        pooled_output = self.dense(first_token_tensor)
+        pooled_output = self.activation(pooled_output)
+        return pooled_output
+
 
 class CoFiTransformerEncoder(nn.Module):
     def __init__(self, cfg):
@@ -395,6 +411,7 @@ class CoFiBertLayer(nn.Module):
     def feed_forward_chunk(self, attention_output):
         intermediate_output = self.intermediate(attention_output)
         if self.intermediate_z is not None:
+            print(f'intermediate_z:{self.intermediate_z.shape}, intermediate_output:{intermediate_output.shape}')
             intermediate_output = intermediate_output.mul(self.intermediate_z)
         layer_output = self.output(
             intermediate_output, attention_output, self.mlp_z, self.hidden_z)
@@ -523,6 +540,7 @@ class CoFiSelfAttention(nn.Module):
         value_layer = self.transpose_for_scores(mixed_value_layer)
         context_layer = torch.matmul(attention_probs, value_layer)
         if head_z is not None:
+            print(f'head_z:{head_z.shape}, context_layer:{context_layer.shape}')
             context_layer *= head_z
 
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
@@ -570,6 +588,7 @@ class CoFiOutput(nn.Module): # 3072 -> 768
     def forward(self, hidden_states, input_tensor, mlp_z, hidden_z=None, inference=False):
         hidden_states = self.dense(hidden_states)
         if mlp_z is not None:
+            print(f'hidden_states:{hidden_states.shape}, mlp_z:{mlp_z.shape}')
             hidden_states *= mlp_z
         if not inference and hidden_states.sum().eq(0).item():
             return hidden_states + input_tensor
@@ -594,6 +613,7 @@ class CoFiBertSelfOutput(nn.Module): # 768 -> 768 (inside the multihead attentio
             return input_tensor
         hidden_states = self.dense(hidden_states)
         if head_layer_z is not None:
+            print(f'hidden_states:{hidden_states.shape}, head_layer_z:{head_layer_z.shape}')
             hidden_states = hidden_states.mul(head_layer_z)
         if not inference and hidden_states.sum().eq(0).item():
             hidden_states = hidden_states + input_tensor

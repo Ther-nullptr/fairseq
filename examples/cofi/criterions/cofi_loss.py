@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from omegaconf import II
 from typing import Optional
 import logging
+import re
 
 import torch
 import torch.nn.functional as F
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class CoFiCriterionConfig(FairseqDataclass):
     prepruning_finetune_steps: int = field(
-        default=10000,
+        default=0,
         metadata={
             "help": "begin pruning"
         },
@@ -90,6 +91,7 @@ class CoFiCriterion(FairseqCriterion):
         distill_loss, distill_ce_loss, loss = self.calculate_distillation_loss(model, teacher_outputs, student_outputs, zs)
 
         if (self.steps >= self.prepruning_finetune_steps):
+            print('start pruning!')
             self.start_prune = True
 
         lagrangian_loss = None
@@ -105,6 +107,7 @@ class CoFiCriterion(FairseqCriterion):
         )
 
         sample_size = sample["target"].size(0)
+        print(f"distill_loss: {distill_loss}, distill_ce_loss: {distill_ce_loss}, lagrangian_loss: {lagrangian_loss}")
         logging_output = {
             "loss": utils.item(loss.data),  # * sample['ntokens'],
             "ntokens": ntokens,
@@ -114,13 +117,12 @@ class CoFiCriterion(FairseqCriterion):
             "distill_ce_loss": distill_ce_loss,
             "lagrangian_loss": lagrangian_loss
         }
-        self.global_step += 1
+        self.steps += 1
         return loss, sample_size, logging_output
             
-    def calculate_distillation_loss(self, teacher_outputs, student_outputs, zs):
-        layer_loss = self.calculate_layer_distillation_loss(teacher_outputs, student_outputs, zs)
+    def calculate_distillation_loss(self, model, teacher_outputs, student_outputs, zs):
+        layer_loss = self.calculate_layer_distillation_loss(model, teacher_outputs, student_outputs, zs)
         distill_loss = layer_loss
-
         ce_distill_loss = F.kl_div(
             input=F.log_softmax(
                 student_outputs[1] / self.distill_temp, dim=-1), #! logits: [32,3]
@@ -150,7 +152,7 @@ class CoFiCriterion(FairseqCriterion):
             # distilliting existing layers
             if self.layer_distill_version == 2:
                 for layer_num, (t_layer_o, s_layer_o) in enumerate(zip(teacher_layer_output, student_layer_output)):
-                    s_layer_o = model.layer_transformation(s_layer_o)
+                    s_layer_o = model.student_model.layer_transformation(s_layer_o)
                     l = mse_loss(t_layer_o, s_layer_o)
                     if mlp_z[layer_num] > 0:
                         layer_loss += l
@@ -159,7 +161,7 @@ class CoFiCriterion(FairseqCriterion):
             elif self.layer_distill_version > 2:
                 l = []
                 specified_teacher_layers = [2, 5, 8, 11]
-                transformed_s_layer_o = [model.layer_transformation(
+                transformed_s_layer_o = [model.student_model.layer_transformation(
                     s_layer_o) for s_layer_o in student_layer_output]
                 specified_teacher_layer_reps = [
                     teacher_layer_output[i] for i in specified_teacher_layers] #! teacher: 4x[32,113,768]
@@ -211,3 +213,40 @@ class CoFiCriterion(FairseqCriterion):
             return layer_loss
         else:
             return None
+
+    @staticmethod
+    def reduce_metrics(logging_outputs) -> None:
+        """Aggregate logging outputs from data parallel training (copied from normal cross entropy)."""
+        loss_sum = sum(log.get("loss", 0) for log in logging_outputs)
+        ntokens = sum(log.get("ntokens", 0) for log in logging_outputs)
+        sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
+
+        metrics.log_scalar(
+            "loss", loss_sum / sample_size / math.log(2), sample_size, round=3
+        )
+        if sample_size != ntokens:
+            metrics.log_scalar(
+                "nll_loss", loss_sum / ntokens / math.log(2), ntokens, round=3
+            )
+            metrics.log_derived(
+                "ppl", lambda meters: utils.get_perplexity(meters["nll_loss"].avg)
+            )
+        else:
+            metrics.log_derived(
+                "ppl", lambda meters: utils.get_perplexity(meters["loss"].avg)
+            )
+
+        counts = {}
+        for lk in logging_outputs[0].keys():
+            if lk.startswith("count_"):
+                val = sum(log[lk] for log in logging_outputs)
+                metrics.log_scalar(lk, val)
+                counts[lk] = val
+
+        for lk in logging_outputs[0].keys():
+            if lk.startswith("loss_"):
+                val = sum(log[lk] for log in logging_outputs)
+                metrics.log_scalar(lk, val / sample_size / math.log(2), round=3)
+            elif lk.startswith("correct_"):
+                val = sum(log[lk] for log in logging_outputs)
+                metrics.log_scalar(lk, val / counts[re.sub("correct", "count", lk)])

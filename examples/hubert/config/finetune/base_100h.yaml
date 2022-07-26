@@ -5,6 +5,7 @@ common:
   log_format: json
   log_interval: 200
   tensorboard_logdir: tblog
+  wandb_project: hubert_finetune_100h
   seed: 1337
 
 checkpoint:

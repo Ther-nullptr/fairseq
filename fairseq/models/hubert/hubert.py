@@ -435,16 +435,16 @@ class HubertModel(BaseFairseqModel):
         output_layer: Optional[int] = None,
     ) -> Dict[str, torch.Tensor]:
         """output layer is 1-based"""
-        logger.info(f"initial shape:{source.shape}")
+        # logger.info(f"initial shape:{source.shape}")
         features = self.forward_features(source)
-        logger.info(f"feature extractor:{features.shape}")
+        # logger.info(f"feature extractor:{features.shape}")
         if target_list is not None:
             features, target_list = self.forward_targets(features, target_list)
 
         features_pen = features.float().pow(2).mean()
 
         features = features.transpose(1, 2)
-        logger.info(f"feature after transpose:{features.shape}")
+        # logger.info(f"feature after transpose:{features.shape}")
         features = self.layer_norm(features)
         unmasked_features = features.clone()
 
@@ -453,7 +453,7 @@ class HubertModel(BaseFairseqModel):
 
         if self.post_extract_proj is not None:
             features = self.post_extract_proj(features)
-        logger.info(f"features after post extract projection:{features.shape}")
+        # logger.info(f"features after post extract projection:{features.shape}")
 
         features = self.dropout_input(features)
         unmasked_features = self.dropout_features(unmasked_features)
@@ -474,7 +474,7 @@ class HubertModel(BaseFairseqModel):
             padding_mask=padding_mask,
             layer=None if output_layer is None else output_layer - 1,
         )
-        logger.info(f"encoder output:{x.shape}")
+        # logger.info(f"encoder output:{x.shape}")
 
         if features_only:
             return {"x": x, "padding_mask": padding_mask, "features": features}

@@ -21,10 +21,10 @@ wandb_project=data2vec-decode-100h
 # stage 1: pretrain
 # stage 2: finetune
 # stage 3: decode
-stage=3
+stage=2
 
 # model_name need to be [wav2vec|hubert|data2vec]
-model_name=data2vec
+model_name=hubert
 
 # set working dir and output dir names
 work_dir=/mnt/lustre/sjtu/home/xc915/superb/wyj-fairseq # or /home

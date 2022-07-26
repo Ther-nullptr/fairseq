@@ -9,8 +9,8 @@ import torch.nn.functional as F
 from torch.nn.modules import Module
 from torch.nn.parameter import Parameter
 from torch.autograd import Variable
-from transformers.utils import logging
-logger = logging.get_logger(__name__)
+import logging
+logger = logging.getLogger(__name__)
 
 limit_a, limit_b, epsilon = -.1, 1.1, 1e-6
 
@@ -21,7 +21,7 @@ class L0Module(Module):
                  temperature=2./3.,
                  lagrangian_warmup=0,
                  start_sparsity=0.0,
-                 target_sparsity=0.0,
+                 target_sparsity=0.95,
                  pruning_type="structured_heads+structured_mlp+hidden+layer",
                  magical_number=0.8, # from Wang et al. 2020
                  ):
@@ -39,7 +39,6 @@ class L0Module(Module):
 
         self.params_per_head_layer = self.hidden_size * self.hidden_size * 4 + self.hidden_size * 4
         self.params_per_head =  self.params_per_head_layer // self.num_attention_heads
-        
 
         self.params_per_mlp_layer = self.hidden_size * self.intermediate_size * 2 + self.hidden_size + self.hidden_size * 4
         self.params_per_intermediate_dim = self.params_per_mlp_layer // self.intermediate_size
@@ -79,8 +78,8 @@ class L0Module(Module):
         logger.info("********** Initializing L0 Module **********") 
         for type in self.types:
             logger.info(f"***** {type} *****")
-            logger.info(f"z.shape", self.z_logas[type].shape)
-            logger.info(f"size", self.sizes[type])
+            logger.info(f"z.shape, {self.z_logas[type].shape}")
+            logger.info(f"size, {self.sizes[type]}")
         logger.info(f"prunable model size: {self.prunable_model_size}")
 
     def set_lagrangian_warmup_steps(self, lagrangian_warmup):
@@ -219,18 +218,15 @@ class L0Module(Module):
         # 12 * 12 * 1
         all_head_score, head_score = self.transform_scores_for_head()
         hidden_score = 1 - self.cdf_qz(0, self.hidden_loga) # 768
-
         if all_head_score is not None:
             head_score = (all_head_score * head_score).reshape(-1)
         else:
             head_score = head_score.reshape(-1)
         num_parameters += \
             torch.sum(torch.outer(hidden_score, head_score)) * self.parameters_per_dim["head"] / self.hidden_size
-
         intlayer_score = 1 - self.cdf_qz(0, self.intlayer_loga)  # 12
         int_score = 1 - self.cdf_qz(0, self.int_loga)  # 12 * 3072
         intlayer_score = intlayer_score.unsqueeze(-1)
-
         int_score = (intlayer_score * int_score).reshape(-1)
         num_parameters += torch.sum(torch.outer(hidden_score, int_score)) * 2
         return num_parameters
@@ -264,6 +260,7 @@ class L0Module(Module):
             expected_size = self.get_num_parameters_and_constraint_for_hidden() #! calculate \bar s
         else:
             expected_size = self.get_num_parameters_and_constraint() #! calculate \bar s
+        
         expected_sparsity = 1 - expected_size / self.prunable_model_size
         if self.lagrangian_warmup > 0:
             target_sparsity = self.get_target_sparsity(pruned_steps)
@@ -271,6 +268,7 @@ class L0Module(Module):
                 self.lambda_1 * (expected_sparsity - target_sparsity)
                 + self.lambda_2 * (expected_sparsity - target_sparsity) ** 2 #! where is the lambda 1 and lambda 2 from
         )
+        print(expected_size, self.prunable_model_size, expected_sparsity, target_sparsity)
         return lagrangian_loss, expected_sparsity, target_sparsity
 
     def get_eps(self, size):
@@ -352,8 +350,6 @@ class L0Module(Module):
         logger.info(f"remaining_model_size: {remaining_model_size}")
 
         return results
-
-        
 
     def forward(self, training=True,):
         zs = {f"{type}_z": [] for type in self.types}

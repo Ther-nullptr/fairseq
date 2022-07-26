@@ -38,19 +38,22 @@ from .cofi_hubert import *
 from .l0_module import *
 from ..utils.cofi_utils import *
 
-logger = logging.get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 @dataclass
 class CoFiHubertTeaStuConfig(CoFiHubertConfig):
     model_path: Optional[str] = field(default=None, metadata={"help": "the path to finetuned hubert model"})
     save_best_path: Optional[str] = field(default=None, metadata={"help": "the path to save l0 and zs"})
     label_dir:  Optional[str] = field(default=None, metadata={"help": "label dir"})
-    prepruning_finetune_steps: int = field(default=10000, metadata={"help": "prepruning finetune steps"})
+    prepruning_finetune_steps: int = field(default=0, metadata={"help": "prepruning finetune steps"})
     hidden_size: int = field(default=768, metadata={"help": "prepruning finetune steps"})
     vocab_size: int = field(default=32, metadata={"help": "vocab size"})
     do_layer_distill: bool = field(default=True, metadata={"help": "do layer distill"})
     is_decoder: bool = field(default=False, metadata={"help": "is decoder"})
     add_cross_attention: bool = field(default=False, metadata={"help": "add cross attention"})
+    intermediate_size: int = field(default=3072, metadata={"help": "intermediate size"})
+    num_attention_heads: int = field(default=12, metadata={"help": "num attention heads"})
+    num_hidden_layers: int = field(default=12, metadata={"help": "num hidden layers"})
 
 @register_model("cofi_hubert_tea_stu", dataclass=CoFiHubertTeaStuConfig)
 class CoFiHubertTeaStu(BaseFairseqModel):
@@ -80,7 +83,6 @@ class CoFiHubertTeaStu(BaseFairseqModel):
         logger.info('load finetuned model of hubert')
         ft_hubert_model = torch.load(cfg.model_path)
         ft_hubert_model = ft_hubert_model['model']
-        print(ft_hubert_model.keys())
         logger.info('copy params to cofi')
         # feature_extractor
         logger.info('initial feature extractor')
@@ -119,8 +121,9 @@ class CoFiHubertTeaStu(BaseFairseqModel):
         state_dict['proj.bias'] = ft_hubert_model[f'w2v_encoder.proj.bias']
         return cls(cfg, student_model)
 
-    def forward(self, inputs):
-        inputs['inputs'] = inputs['net_input']['source']
+    def forward(self, raw_inputs):
+        inputs = {}
+        inputs['inputs'] = raw_inputs['net_input']['source']
         if (self.steps >= self.prepruning_finetune_steps):
             self.start_prune = True
         if (self.start_prune):
@@ -137,13 +140,16 @@ class CoFiHubertTeaStu(BaseFairseqModel):
                 teacher_inputs_keys = ["inputs"]
                 teacher_inputs = {key: inputs[key] for key in teacher_inputs_keys if key in inputs}
                 teacher_outputs = self.teacher_model(**teacher_inputs)
-            student_outputs = self.student_model(inputs['inputs']) #! get the two outputs
+        student_outputs = self.student_model(**inputs) #! get the two outputs
         
         zs = {key: inputs[key] for key in inputs if "_z" in key}
         self.steps += 1
         if(self.steps % 500 == 0 and self.start_prune):
             logger.info(f'save zs and l0_module in {self.steps}')
             zs = self.l0_module.forward(training = False)
+            print(f'zs:{zs}')
+            if not os.path.exists(self.save_best_path):
+                os.makedirs(self.save_best_path)
             torch.save(zs, os.path.join(self.save_best_path, "zs.pt"))
             torch.save(self.l0_module, os.path.join(self.save_best_path, "l0_module.pt"))
         return teacher_outputs, student_outputs, zs
@@ -162,7 +168,7 @@ class CoFiHubertForASR(nn.Module):
     def forward(self, inputs):
         loss = None
         last_hidden_state, pooled_output, hidden_states, attentions = self.w2v_model(inputs)
-        result = self.proj(last_hidden_state)
+        result = self.proj(pooled_output)
         return (loss, result, hidden_states, attentions)
 
 

@@ -146,6 +146,7 @@ class HubertAsrConfig(FairseqDataclass):
 
 @dataclass
 class HubertCtcConfig(HubertAsrConfig):
+    autoregressive: bool = False
     pass
 
 
@@ -187,7 +188,7 @@ class HubertCtc(BaseFairseqModel):
 
     def forward(self, **kwargs):
         x = self.w2v_encoder(**kwargs)
-        logger.info(x['encoder_out'].shape)
+        # logger.info(x['encoder_out'].shape)
         return x
 
 
@@ -408,19 +409,19 @@ class HubertEncoder(FairseqEncoder):
         ft = self.freeze_finetune_updates <= self.num_updates
 
         with torch.no_grad() if not ft else contextlib.ExitStack():
-            logger.info(f'before hubert encoder:{source.shape}')
+            # logger.info(f'before hubert encoder:{source.shape}')
             x, padding_mask = self.w2v_model.extract_features(**w2v_args)
-            logger.info(f'after hubert encoder:{x.shape}')
+            # logger.info(f'after hubert encoder:{x.shape}')
             if tbc:
                 # B x T x C -> T x B x C
                 x = x.transpose(0, 1)
-                logger.info(f'after transpose in hubert encoder:{x.shape}')
+                # logger.info(f'after transpose in hubert encoder:{x.shape}')
 
         x = self.final_dropout(x)
 
         if self.proj:
             x = self.proj(x)
-            logger.info(f'after proj in hubert encoder:{x.shape}')
+            # logger.info(f'after proj in hubert encoder:{x.shape}')
 
         return {
             "encoder_out": x,  # T x B x C
