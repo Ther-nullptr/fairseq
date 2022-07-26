@@ -68,8 +68,8 @@ class L0Module(Module):
 
         self.magical_number = magical_number
 
-        self.lambda_1 = torch.nn.Parameter(torch.tensor(0.0))
-        self.lambda_2 = torch.nn.Parameter(torch.tensor(0.0))
+        self.lambda_1 = torch.nn.Parameter(torch.tensor(0.1))
+        self.lambda_2 = torch.nn.Parameter(torch.tensor(0.1))
 
         self.lagrangian_warmup = lagrangian_warmup
         self.start_sparsity = start_sparsity
@@ -264,6 +264,7 @@ class L0Module(Module):
         expected_sparsity = 1 - expected_size / self.prunable_model_size
         if self.lagrangian_warmup > 0:
             target_sparsity = self.get_target_sparsity(pruned_steps)
+        print(f'record:{self.lambda_1}, {self.lambda_2}, {expected_sparsity}, {target_sparsity}')
         lagrangian_loss = ( #! see appendix
                 self.lambda_1 * (expected_sparsity - target_sparsity)
                 + self.lambda_2 * (expected_sparsity - target_sparsity) ** 2 #! where is the lambda 1 and lambda 2 from

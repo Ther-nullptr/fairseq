@@ -50,7 +50,7 @@ class CoFiHubertTeaStuConfig(CoFiHubertConfig):
     label_dir: Optional[str] = field(default=None,
                                      metadata={"help": "label dir"})
     prepruning_finetune_steps: int = field(
-        default=0, metadata={"help": "prepruning finetune steps"})
+        default=100, metadata={"help": "prepruning finetune steps"})
     hidden_size: int = field(default=768,
                              metadata={"help": "prepruning finetune steps"})
     vocab_size: int = field(default=32, metadata={"help": "vocab size"})
@@ -65,6 +65,7 @@ class CoFiHubertTeaStuConfig(CoFiHubertConfig):
                                      metadata={"help": "num attention heads"})
     num_hidden_layers: int = field(default=12,
                                    metadata={"help": "num hidden layers"})
+    lagrangian_warmup_steps: int = field(default = 200, metadata={"help": "lagrangian warmup steps"})
 
 
 @register_model("cofi_hubert_tea_stu", dataclass=CoFiHubertTeaStuConfig)
@@ -76,6 +77,7 @@ class CoFiHubertTeaStu(BaseFairseqModel):
         self.student_model = student_model
         self.teacher_model = copy.deepcopy(student_model)
         self.l0_module = L0Module(cfg)
+        self.l0_module.set_lagrangian_warmup_steps(cfg.lagrangian_warmup_steps)
         self.start_prune = False
         self.steps = 0
         self.save_best_path = cfg.save_best_path
@@ -179,7 +181,7 @@ class CoFiHubertTeaStu(BaseFairseqModel):
     def forward(self, raw_inputs):
         inputs = {}
         inputs['input_raw_data'] = raw_inputs['net_input']['source']
-        if (self.steps >= self.prepruning_finetune_steps):
+        if (1):
             self.start_prune = True
         if (self.start_prune):
             zs = self.l0_module.forward(training=True)

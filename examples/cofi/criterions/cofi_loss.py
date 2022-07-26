@@ -21,13 +21,14 @@ from fairseq.data.data_utils import post_process
 from fairseq.tasks import FairseqTask
 from fairseq.logging.meters import safe_round
 from transformers.trainer import Trainer
+import wandb
 
 logger = logging.getLogger(__name__)
 
 @dataclass
 class CoFiCriterionConfig(FairseqDataclass):
     prepruning_finetune_steps: int = field(
-        default=0,
+        default=100,
         metadata={
             "help": "begin pruning"
         },
@@ -42,6 +43,12 @@ class CoFiCriterionConfig(FairseqDataclass):
         default=2.0,
         metadata={
             "help": "distill temp"
+        },
+    )
+    target_sparsity: float = field(
+        default=0.95,
+        metadata={
+            "help": "target sparsity"
         },
     )
     distill_ce_loss_alpha: float = field(
@@ -90,7 +97,8 @@ class CoFiCriterion(FairseqCriterion):
         distill_ce_loss = None
         distill_loss, distill_ce_loss, loss = self.calculate_distillation_loss(model, teacher_outputs, student_outputs, zs)
 
-        if (self.steps >= self.prepruning_finetune_steps):
+        if 1:
+        # if (self.steps >= self.prepruning_finetune_steps):
             print('start pruning!')
             self.start_prune = True
 
@@ -107,7 +115,7 @@ class CoFiCriterion(FairseqCriterion):
         )
 
         sample_size = sample["target"].size(0)
-        print(f"distill_loss: {distill_loss}, distill_ce_loss: {distill_ce_loss}, lagrangian_loss: {lagrangian_loss}")
+        
         logging_output = {
             "loss": utils.item(loss.data),  # * sample['ntokens'],
             "ntokens": ntokens,
