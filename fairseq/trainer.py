@@ -295,6 +295,24 @@ class Trainer(object):
             )
         )
 
+        #!! for cofi
+        if(self.model.l0_module != None):
+            params = {}
+            no_decay = ["bias", "LayerNorm.weight"]
+            freeze_keywords = ["feature_extractor"]
+
+            main_model_params_1 = [p for n, p in self.model.student_model.named_parameters() if not any(nd in n for nd in no_decay) and not any(fk in n for fk in freeze_keywords)]
+            main_model_params_2 = [p for n, p in self.model.student_model.named_parameters() if any(nd in n for nd in no_decay) and not any(fk in n for fk in freeze_keywords)]
+            l0_params = [p for n, p in self.model.l0_module.named_parameters() if "lambda" not in n]
+            lagrangian_params = [p for n, p in self.l0_module.named_parameters() if "lambda" in n]
+
+            logger.info("divide the params into 4 parts: main_model_params_1, main_model_params_2, l0_params, lagrangian_params")
+
+            params['main_model_params_1'] = main_model_params_1
+            params['main_model_params_2'] = main_model_params_2
+            params['l0_params'] = l0_params
+            params['lagrangian_params'] = lagrangian_params
+
         if self.is_fsdp and self.cfg.common.fp16:
             # FullyShardedDataParallel always uses MemoryEfficientFP16 wrapper,
             # mostly for the grad scaling. But if we don't have the

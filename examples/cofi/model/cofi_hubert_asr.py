@@ -70,8 +70,7 @@ class CoFiHubertTeaStuConfig(CoFiHubertConfig):
 
 @register_model("cofi_hubert_tea_stu", dataclass=CoFiHubertTeaStuConfig)
 class CoFiHubertTeaStu(BaseFairseqModel):
-    def __init__(self, cfg: CoFiHubertTeaStuConfig,
-                 student_model: BaseFairseqModel):
+    def __init__(self, cfg: CoFiHubertTeaStuConfig, student_model: BaseFairseqModel):
         super().__init__()
         self.cfg = cfg
         self.student_model = student_model

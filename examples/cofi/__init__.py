@@ -4,3 +4,4 @@ from .model.cofi_hubert import *
 from .model.l0_module import *
 from .utils.cofi_utils import *
 from .utils.utils import *
+from .optimizer.cofi_optimizer import *
