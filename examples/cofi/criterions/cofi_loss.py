@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from omegaconf import II
 from typing import Optional
 import logging
+import re
 
 import torch
 import torch.nn.functional as F
@@ -19,14 +20,14 @@ from fairseq.dataclass import FairseqDataclass
 from fairseq.data.data_utils import post_process
 from fairseq.tasks import FairseqTask
 from fairseq.logging.meters import safe_round
-from transformers.trainer import Trainer
+import wandb
 
 logger = logging.getLogger(__name__)
 
 @dataclass
 class CoFiCriterionConfig(FairseqDataclass):
     prepruning_finetune_steps: int = field(
-        default=10000,
+        default=100,
         metadata={
             "help": "begin pruning"
         },
@@ -43,14 +44,20 @@ class CoFiCriterionConfig(FairseqDataclass):
             "help": "distill temp"
         },
     )
+    target_sparsity: float = field(
+        default=0.95,
+        metadata={
+            "help": "target sparsity"
+        },
+    )
     distill_ce_loss_alpha: float = field(
-        default=0.1,
+        default=5,
         metadata={
             "help": "distill ce loss alpha"
         },
     )
     distill_loss_alpha: float = field(
-        default=0.9,
+        default=5,
         metadata={
             "help": "distill loss alpha"
         },
@@ -71,6 +78,7 @@ class CoFiCriterionConfig(FairseqDataclass):
 @register_criterion("cofi_loss", dataclass=CoFiCriterionConfig)
 class CoFiCriterion(FairseqCriterion):
     def __init__(self, cfg: CoFiCriterionConfig, task: FairseqTask):
+        super().__init__(task)
         self.steps = 0
         self.start_prune = False
         self.prepruning_finetune_steps = cfg.prepruning_finetune_steps
@@ -82,17 +90,14 @@ class CoFiCriterion(FairseqCriterion):
         self.layer_distill_version = cfg.layer_distill_version
         logger.info('initial CoFiCriterion')
 
-    def forward(self, sample, model):
-        teacher_outputs, student_outputs, zs = model(**sample)
+    def forward(self, model, sample):
+        teacher_outputs, student_outputs, zs = model(sample)
         distill_loss = None
         distill_ce_loss = None
-        distill_loss, distill_ce_loss, loss = self.calculate_distillation_loss(teacher_outputs, student_outputs, zs)
-
-        if (self.steps >= self.prepruning_finetune_steps):
-            self.start_prune = True
+        distill_loss, distill_ce_loss, loss = self.calculate_distillation_loss(model, teacher_outputs, student_outputs, zs)
 
         lagrangian_loss = None
-        if self.start_prune:
+        if model.start_prune:
             lagrangian_loss, _, _ = \
                 model.l0_module.lagrangian_regularization(self.steps - self.prepruning_finetune_steps)
             loss += lagrangian_loss
@@ -104,22 +109,23 @@ class CoFiCriterion(FairseqCriterion):
         )
 
         sample_size = sample["target"].size(0)
+        print(f'loss:{loss}, lagrangian_loss:{lagrangian_loss}, distill_layer_loss:{distill_loss}, distill_ce_loss:{distill_ce_loss}')
+        
         logging_output = {
             "loss": utils.item(loss.data),  # * sample['ntokens'],
             "ntokens": ntokens,
             "nsentences": sample["id"].numel(),
             "sample_size": sample_size,
-            "distill_loss": distill_loss,
-            "distill_ce_loss": distill_ce_loss,
-            "lagrangian_loss": lagrangian_loss
+            "distill_loss": float(distill_loss),
+            "distill_ce_loss": float(distill_ce_loss),
+            "lagrangian_loss": None if lagrangian_loss == None else float(lagrangian_loss)
         }
-        self.global_step += 1
+        self.steps += 1
         return loss, sample_size, logging_output
             
-    def calculate_distillation_loss(self, teacher_outputs, student_outputs, zs):
-        layer_loss = self.calculate_layer_distillation_loss(teacher_outputs, student_outputs, zs)
+    def calculate_distillation_loss(self, model, teacher_outputs, student_outputs, zs):
+        layer_loss = self.calculate_layer_distillation_loss(model, teacher_outputs, student_outputs, zs)
         distill_loss = layer_loss
-
         ce_distill_loss = F.kl_div(
             input=F.log_softmax(
                 student_outputs[1] / self.distill_temp, dim=-1), #! logits: [32,3]
@@ -130,10 +136,10 @@ class CoFiCriterion(FairseqCriterion):
         loss = self.distill_ce_loss_alpha * ce_distill_loss
         if distill_loss is not None:
             loss += self.distill_loss_alpha * distill_loss
-
+        wandb.log({'distill_loss':distill_loss,'ce_distill_loss':ce_distill_loss,'loss':loss})
         return distill_loss, ce_distill_loss, loss
 
-    def calculate_layer_distillation_loss(self, teacher_outputs, student_outputs, zs):
+    def calculate_layer_distillation_loss(self, model, teacher_outputs, student_outputs, zs):
         mse_loss = torch.nn.MSELoss(reduction="mean")
         if self.do_layer_distill: #! only do layer distill
             mlp_z = None
@@ -149,7 +155,7 @@ class CoFiCriterion(FairseqCriterion):
             # distilliting existing layers
             if self.layer_distill_version == 2:
                 for layer_num, (t_layer_o, s_layer_o) in enumerate(zip(teacher_layer_output, student_layer_output)):
-                    s_layer_o = self.model.layer_transformation(s_layer_o)
+                    s_layer_o = model.student_model.layer_transformation(s_layer_o)
                     l = mse_loss(t_layer_o, s_layer_o)
                     if mlp_z[layer_num] > 0:
                         layer_loss += l
@@ -158,7 +164,7 @@ class CoFiCriterion(FairseqCriterion):
             elif self.layer_distill_version > 2:
                 l = []
                 specified_teacher_layers = [2, 5, 8, 11]
-                transformed_s_layer_o = [self.model.layer_transformation(
+                transformed_s_layer_o = [model.student_model.layer_transformation(
                     s_layer_o) for s_layer_o in student_layer_output]
                 specified_teacher_layer_reps = [
                     teacher_layer_output[i] for i in specified_teacher_layers] #! teacher: 4x[32,113,768]
@@ -210,3 +216,40 @@ class CoFiCriterion(FairseqCriterion):
             return layer_loss
         else:
             return None
+
+    @staticmethod
+    def reduce_metrics(logging_outputs) -> None:
+        """Aggregate logging outputs from data parallel training (copied from normal cross entropy)."""
+        loss_sum = sum(log.get("loss", 0) for log in logging_outputs)
+        ntokens = sum(log.get("ntokens", 0) for log in logging_outputs)
+        sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
+
+        metrics.log_scalar(
+            "loss", loss_sum / sample_size / math.log(2), sample_size, round=3
+        )
+        if sample_size != ntokens:
+            metrics.log_scalar(
+                "nll_loss", loss_sum / ntokens / math.log(2), ntokens, round=3
+            )
+            metrics.log_derived(
+                "ppl", lambda meters: utils.get_perplexity(meters["nll_loss"].avg)
+            )
+        else:
+            metrics.log_derived(
+                "ppl", lambda meters: utils.get_perplexity(meters["loss"].avg)
+            )
+
+        counts = {}
+        for lk in logging_outputs[0].keys():
+            if lk.startswith("count_"):
+                val = sum(log[lk] for log in logging_outputs)
+                metrics.log_scalar(lk, val)
+                counts[lk] = val
+
+        for lk in logging_outputs[0].keys():
+            if lk.startswith("loss_"):
+                val = sum(log[lk] for log in logging_outputs)
+                metrics.log_scalar(lk, val / sample_size / math.log(2), round=3)
+            elif lk.startswith("correct_"):
+                val = sum(log[lk] for log in logging_outputs)
+                metrics.log_scalar(lk, val / counts[re.sub("correct", "count", lk)])

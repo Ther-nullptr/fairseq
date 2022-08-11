@@ -16,7 +16,7 @@ cd ${work_dir}
 timestamp=`date +%Y-%m-%d-%H-%M`
 
 # !important setup wandb project
-wandb_project=hubert-finetune-100h
+wandb_project=hubert_rnn
 
 # stage 1: pretrain
 # stage 2: finetune
@@ -275,8 +275,8 @@ if [ ${model_name} == "hubert" ]; then
         config_finetune_name=base_100h
 
         # set pretrained model
-        output_dir=${work_dir}/outputs/${model_name}/${exp_name}/
-        pretrain_model_name=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/hubert_base.ls960.pt
+        output_dir=${work_dir}/outputs/hubert_rnn/${model_name}/${exp_name}/
+        pretrain_model_name=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/distiller.pt
         # pretrain_model_name=${output_dir}/checkpoints/checkpoint_36_25000.pt
 
         # set finetune data
@@ -294,6 +294,7 @@ if [ ${model_name} == "hubert" ]; then
         model.w2v_path=${pretrain_model_name} \
         hydra.run.dir=${finetune_output_dir} \
         common.log_interval=10 \
+        common.wandb_project=${wandb_project}
 
     fi
 
@@ -303,19 +304,20 @@ if [ ${model_name} == "hubert" ]; then
         # edit model config
         config_decode_dir=${work_dir}/examples/hubert/config/decode
 
-        finetune_data_mode=10min
+        finetune_data_mode=100h
         decode_output_dir=${output_dir}/finetune_${finetune_data_mode}/decode
 
         # lexicon & ngram for hubert
-        lexicon_file=/userhome/user/chenxie95/github/fairseq/outputs/hubert/pretrained_models/librispeech_lexicon.lst
-        arpa_file=/userhome/user/chenxie95/github/fairseq/outputs/hubert/pretrained_models/4-gram.arpa
+        lexicon_file=/mnt/lustre/sjtu/home/xc915/superb/nlp_utils/lexicon/librispeech_lexicon.lst
+        arpa_file=/mnt/lustre/sjtu/home/xc915/superb/nlp_utils/arpa/4-gram.mmap
 
         # use lm
-        use_kenlm=false
+        use_kenlm=true
+        decode_data_type=dev-clean
 
-        decode_data_path=/userhome/data/librispeech/librispeech_finetuning_data/valid
+        decode_data_path=/mnt/lustre/sjtu/home/xc915/superb/dataset/librispeech_finetuning_data/${decode_data_type}
         # decode_model_path=/userhome/user/chenxie95/github/fairseq/outputs/hubert/pretrained_models/checkpoint_best.pt
-        decode_model_path=/userhome/user/chenxie95/github/fairseq/outputs/hubert/libri960h_base_debug/finetune_10h/checkpoints/checkpoint_best.pt
+        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/hubert-finetune/hubert-base-finetune-10min.pt
 
         if ${use_kenlm}; then
             cd ${code_dir} && python3 examples/speech_recognition/new/infer.py \
@@ -453,7 +455,7 @@ if [ ${model_name} == "data2vec" ]; then
 
         decode_data_path=/mnt/lustre/sjtu/home/xc915/superb/dataset/librispeech_finetuning_data/${decode_data_type}
         # decode_model_path=/userhome/user/chenxie95/github/fairseq/outputs/hubert/pretrained_models/checkpoint_best.pt
-        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/data2vec_adapter100h.pt
+        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/data2vec-finetune/audio_base_ls_100h.pt
 
         if ${use_kenlm}; then
             cd ${code_dir} && python3 examples/speech_recognition/new/infer.py \
@@ -461,7 +463,6 @@ if [ ${model_name} == "data2vec" ]; then
             --config-name infer_kenlm \
             task.data=${decode_data_path} \
             task.normalize=false \
-            common.user_dir=${work_dir}/examples/data2vec \
             common_eval.path=${decode_model_path} \
             dataset.gen_subset=test \
             decoding.lexicon=${lexicon_file} \

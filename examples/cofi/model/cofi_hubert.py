@@ -15,69 +15,193 @@ import torch.nn as nn
 import torch.nn.functional as F
 from omegaconf import II
 
+from fairseq import utils
 from fairseq.data.data_utils import compute_mask_indices
 from fairseq.models import BaseFairseqModel, register_model
-from fairseq.models.wav2vec.wav2vec2 import (
-    EXTRACTOR_MODE_CHOICES,
-    MASKING_DISTRIBUTION_CHOICES,
-    LAYER_TYPE_CHOICES,
-    ConvFeatureExtractionModel,
-    Wav2Vec2Config
-)
+from fairseq.dataclass import ChoiceEnum, FairseqDataclass
+from fairseq.models.wav2vec.wav2vec2 import (EXTRACTOR_MODE_CHOICES,
+                                             MASKING_DISTRIBUTION_CHOICES,
+                                             LAYER_TYPE_CHOICES,
+                                             ConvFeatureExtractionModel,
+                                             Wav2Vec2Config)
 
 from transformers.modeling_utils import (apply_chunking_to_forward,
                                          find_pruneable_heads_and_indices,
-                                         prune_linear_layer)
-from transformers.models.bert.modeling_bert import (
-    BertAttention, BertLayer, BertModel, BertOutput,
-    BertSelfAttention, BertSelfOutput)
+                                         prune_linear_layer, ModuleUtilsMixin)
+
+from transformers.models.bert.modeling_bert import (BertAttention, BertLayer,
+                                                    BertModel, BertOutput,
+                                                    BertSelfAttention,
+                                                    BertSelfOutput)
 
 logger = logging.getLogger(__name__)
+
 
 @dataclass
 class CoFiHubertConfig(Wav2Vec2Config):
     hidden_size: int = field(default=768, metadata={"help": "hidden size"})
-    num_attention_heads: int = field(default=12, metadata={"help": "num attention heads"})
-    feature_extractor_dim: int = field(default=512, metadata={"help": "feature extractor dim"})
-    num_hidden_layers: int = field(default=12, metadata={"help": "num hidden layers"})
-    attention_probs_dropout_prob: float = field(default=0.1, metadata={"help": "attention probs dropout prob"})
+    num_attention_heads: int = field(default=12,
+                                     metadata={"help": "num attention heads"})
+    feature_extractor_dim: int = field(
+        default=512, metadata={"help": "feature extractor dim"})
+    num_hidden_layers: int = field(default=12,
+                                   metadata={"help": "num hidden layers"})
     intermediate_size: int = field(default=3072, metadata={"help": "xxx"})
+    feed_forward_chunk: int = field(default=3072, metadata={"help": "xxx"})
+    chunk_size_feed_forward: int = field(default=3072,
+                                         metadata={"help": "xxx"})
+    seq_len_dim: int = field(default=3072, metadata={"help": "xxx"})
+
+    attention_probs_dropout_prob: float = field(
+        default=0.1, metadata={"help": "attention probs dropout prob"})
     layer_norm_eps: float = field(default=1e-12, metadata={"help": "xxx"})
     hidden_dropout_prob: float = field(default=0.1, metadata={"help": "xxx"})
+    label_rate: float = II("task.label_rate")
 
+    extractor_mode: EXTRACTOR_MODE_CHOICES = field(
+        default="default",
+        metadata={
+            "help":
+            "mode for feature extractor. default has a single group "
+            "norm with d groups in the first conv block, whereas layer_norm "
+            "has layer norms in every block (meant to use with normalize=True)"
+        },
+    )
+    encoder_layers: int = field(
+        default=12, metadata={"help": "num encoder layers in the transformer"})
+    encoder_embed_dim: int = field(
+        default=768, metadata={"help": "encoder embedding dimension"})
+    encoder_ffn_embed_dim: int = field(
+        default=3072, metadata={"help": "encoder embedding dimension for FFN"})
+    encoder_attention_heads: int = field(
+        default=12, metadata={"help": "num encoder attention heads"})
+    activation_fn: ChoiceEnum(utils.get_available_activation_fns()) = field(
+        default="gelu", metadata={"help": "activation function to use"})
+    layer_type: LAYER_TYPE_CHOICES = field(
+        default="transformer", metadata={"help": "layer type in encoder"})
+
+    # dropouts
+    dropout: float = field(
+        default=0.1,
+        metadata={"help": "dropout probability for the transformer"},
+    )
+    attention_dropout: float = field(
+        default=0.1,
+        metadata={"help": "dropout probability for attention weights"},
+    )
+    activation_dropout: float = field(
+        default=0.0,
+        metadata={"help": "dropout probability after activation in FFN"},
+    )
+    encoder_layerdrop: float = field(
+        default=0.0,
+        metadata={"help": "probability of dropping a tarnsformer layer"},
+    )
+    dropout_input: float = field(
+        default=0.0,
+        metadata={"help": "dropout to apply to the input (after feat extr)"},
+    )
+    dropout_features: float = field(
+        default=0.0,
+        metadata={
+            "help": "dropout to apply to the features (after feat extr)"
+        },
+    )
+
+    final_dim: int = field(
+        default=0,
+        metadata={
+            "help":
+            "project final representations and targets to this many "
+            "dimensions. set to encoder_embed_dim is <= 0"
+        },
+    )
+    untie_final_proj: bool = field(
+        default=False,
+        metadata={"help": "use separate projection for each target"},
+    )
+    layer_norm_first: bool = field(
+        default=False,
+        metadata={"help": "apply layernorm first in the transformer"},
+    )
+    conv_feature_layers: str = field(
+        default="[(512,10,5)] + [(512,3,2)] * 4 + [(512,2,2)] * 2",
+        metadata={
+            "help":
+            "string describing convolutional feature extraction "
+            "layers in form of a python list that contains "
+            "[(dim, kernel_size, stride), ...]"
+        },
+    )
+    conv_bias: bool = field(default=False,
+                            metadata={"help": "include bias in conv encoder"})
+    logit_temp: float = field(
+        default=0.1, metadata={"help": "temperature to divide logits by"})
+    target_glu: bool = field(
+        default=False, metadata={"help": "adds projection + glu to targets"})
+    feature_grad_mult: float = field(
+        default=1.0,
+        metadata={"help": "multiply feature extractor var grads by this"},
+    )
+
+    # positional embeddings
+    conv_pos: int = field(
+        default=128,
+        metadata={
+            "help": "number of filters for convolutional positional embeddings"
+        },
+    )
+    conv_pos_groups: int = field(
+        default=16,
+        metadata={
+            "help": "number of groups for convolutional positional embedding"
+        },
+    )
+    latent_temp: Tuple[float, float, float] = field(
+        default=(2, 0.5, 0.999995),
+        metadata={"help": "legacy (to be removed)"},
+    )
 
 @register_model("hubert_cofi", dataclass=CoFiHubertConfig)
-class CoFiHubertModel(BaseFairseqModel, BertModel): # top module
+class CoFiHubertModel(BaseFairseqModel, ModuleUtilsMixin):  # top module
     def __init__(self, cfg):
-        super().__init__(cfg)
-        self.encoder = CoFiTransformerEncoder(cfg)
+        super().__init__()
+        self.feature_extractor = ConvFeatureExtractionModel(
+            conv_layers=eval(cfg.conv_feature_layers),
+            dropout=0.0,
+            mode=cfg.extractor_mode,
+            conv_bias=cfg.conv_bias,
+        )
         self.post_proj = CoFiPostProj(cfg)
-        self.feature_extractor = ConvFeatureExtractionModel(cfg)
+        self.encoder = CoFiTransformerEncoder(cfg)
+        self.pooler = CoFiPooler(cfg)
 
-    def forward(
-        self,
-        input_raw_data=None,
-        attention_mask=None,
-        output_attentions=None,
-        output_hidden_states=None,
-        head_layer_z=True,
-        head_z=True,
-        intermediate_z=True,
-        mlp_z=True,
-        hidden_z=True
-    ):
+    def forward(self,
+                input_raw_data=None,
+                attention_mask=None,
+                output_attentions=True,
+                output_hidden_states=True,
+                head_layer_z=None,
+                head_z=None,
+                intermediate_z=None,
+                mlp_z=None,
+                hidden_z=None):
         device = input_raw_data.device
         with torch.no_grad():
             feature_extractor_output = self.feature_extractor(input_raw_data)
-        feature_extractor_output = feature_extractor_output.transpose(1, 2)
-        post_proj_output = self.post_proj(feature_extractor_output)
+            feature_extractor_output = feature_extractor_output.transpose(1, 2)
+        post_proj_output = self.post_proj(feature_extractor_output, hidden_z)
         post_proj_shape = post_proj_output.size()
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
         if attention_mask is None:
-            attention_mask = torch.ones(post_proj_shape, device=device)
+            attention_mask = torch.ones(
+                (int(post_proj_shape[0]), 1, int(post_proj_shape[1])),
+                device=device)
+            # according to the debug result of cofi
 
-        extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask, post_proj_shape, device)
+        extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(
+            attention_mask, post_proj_shape, device)
         encoder_outputs = self.encoder(
             post_proj_output,
             attention_mask=extended_attention_mask,
@@ -87,113 +211,127 @@ class CoFiHubertModel(BaseFairseqModel, BertModel): # top module
             head_z=head_z,
             mlp_z=mlp_z,
             head_layer_z=head_layer_z,
-            hidden_z=hidden_z
-        )
-
+            hidden_z=hidden_z)
         sequence_output = encoder_outputs[0]
         pooled_output = self.pooler(sequence_output)
         return (sequence_output, pooled_output) + encoder_outputs[1:]
 
+    def prune_heads(self, heads_to_prune: Dict[int, List[int]]):
+        for layer, heads in heads_to_prune.items():
+            self.encoder.layer[layer].attention.prune_heads(heads)
+
+
+class CoFiPooler(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.dense = nn.Linear(cfg.hidden_size, cfg.hidden_size)
+        self.activation = nn.Tanh()
+
+    def forward(self, hidden_states):
+        # We "pool" the model by simply taking the hidden state corresponding
+        # to the first token.
+        first_token_tensor = hidden_states[:, 0]
+        pooled_output = self.dense(first_token_tensor)
+        pooled_output = self.activation(pooled_output)
+        return pooled_output
+
 
 class CoFiTransformerEncoder(nn.Module):
     def __init__(self, cfg):
-        super().__init__(cfg)
-        self.layer = nn.ModuleList([CoFiBertLayer(cfg) for _ in range(cfg.num_hidden_layers)])
+        super().__init__()
+        self.layer = nn.ModuleList(
+            [CoFiBertLayer(cfg) for _ in range(cfg.num_hidden_layers)])
 
-    def forward(
-        self,
-        hidden_states,
-        attention_mask=None,
-        output_attentions=False,
-        output_hidden_states=False,
-        head_z=None,
-        head_layer_z=None,
-        intermediate_z=None,
-        mlp_z=None,
-        hidden_z=None
-    ):
+    def forward(self,
+                hidden_states,
+                attention_mask=None,
+                output_attentions=True,
+                output_hidden_states=True,
+                head_z=None,
+                head_layer_z=None,
+                intermediate_z=None,
+                mlp_z=None,
+                hidden_z=None):
         all_hidden_states = () if output_hidden_states else None
         all_attentions = () if output_attentions else None
         for i, layer_module in enumerate(self.layer):
             if output_hidden_states:
-                all_hidden_states = all_hidden_states + (hidden_states,)
+                all_hidden_states = all_hidden_states + (hidden_states, )
             layer_outputs = layer_module(
                 hidden_states,
                 attention_mask,
                 output_attentions,
-                intermediate_z=intermediate_z[i] if intermediate_z is not None else None,
+                intermediate_z=intermediate_z[i]
+                if intermediate_z is not None else None,
                 head_z=head_z[i] if head_z is not None else None,
                 mlp_z=mlp_z[i] if mlp_z is not None else None,
-                head_layer_z=head_layer_z[i] if head_layer_z is not None else None,
-                hidden_z=hidden_z
-            )
+                head_layer_z=head_layer_z[i]
+                if head_layer_z is not None else None,
+                hidden_z=hidden_z)
             hidden_states = layer_outputs[0]
             if output_attentions:
-                all_attentions = all_attentions + (layer_outputs[1],)
+                all_attentions = all_attentions + (layer_outputs[1], )
 
         if output_hidden_states:
-            all_hidden_states = all_hidden_states + (hidden_states,)
-        return tuple(v for v in [hidden_states, all_hidden_states, all_attentions] if v is not None)
+            all_hidden_states = all_hidden_states + (hidden_states, )
+        return tuple(
+            v for v in [hidden_states, all_hidden_states, all_attentions]
+            if v is not None)
 
 
-class CoFiBertLayer(BertLayer):
+class CoFiBertLayer(nn.Module):
     def __init__(self, cfg):
-        super().__init__(cfg)
+        super().__init__()
         self.attention = CoFiMultiheadAttention(cfg)
+        self.intermediate = CoFiIntermediate(cfg)
         self.output = CoFiOutput(cfg)
         self.cfg = cfg
 
-    def forward(
-        self,
-        hidden_states,
-        attention_mask=None,
-        output_attentions=False,
-        head_z=None,
-        head_layer_z=None,
-        intermediate_z=None,
-        mlp_z=None,
-        hidden_z=None
-    ):
+    def forward(self,
+                hidden_states,
+                attention_mask=None,
+                output_attentions=True,
+                head_z=None,
+                head_layer_z=None,
+                intermediate_z=None,
+                mlp_z=None,
+                hidden_z=None):
         self_attention_outputs = self.attention(
             hidden_states,
             attention_mask,
             output_attentions=output_attentions,
             head_z=head_z,
             head_layer_z=head_layer_z,
-            hidden_z=hidden_z
-        )
+            hidden_z=hidden_z)
 
         attention_output = self_attention_outputs[0]
         # add self attentions if we output attention weights
         outputs = self_attention_outputs[1:]
 
-        if self.intermediate.dense is None:
-            layer_output = attention_output
-        else:
-            self.intermediate_z = intermediate_z
-            self.mlp_z = mlp_z
-            self.hidden_z = hidden_z
-            layer_output = apply_chunking_to_forward(
-                self.feed_forward_chunk, self.chunk_size_feed_forward, self.seq_len_dim, attention_output
-            )
-        outputs = (layer_output,) + outputs + (attention_output, )
+        self.intermediate_z = intermediate_z
+        self.mlp_z = mlp_z
+        self.hidden_z = hidden_z
+        layer_output = apply_chunking_to_forward(self.feed_forward_chunk, 0, 1,
+                                                 attention_output)
+        outputs = (layer_output, ) + outputs + (attention_output, )
         return outputs
 
     def feed_forward_chunk(self, attention_output):
         intermediate_output = self.intermediate(attention_output)
         if self.intermediate_z is not None:
             intermediate_output = intermediate_output.mul(self.intermediate_z)
-        layer_output = self.output(
-            intermediate_output, attention_output, self.mlp_z, self.hidden_z)
+        layer_output = self.output(intermediate_output, attention_output,
+                                   self.mlp_z, self.hidden_z)
         return layer_output
 
 
-class CoFiMultiheadAttention(BertAttention):
+class CoFiMultiheadAttention(nn.Module):
     def __init__(self, cfg):
-        super().__init__(cfg)
+        super().__init__()
         self.self = CoFiSelfAttention(cfg)
         self.output = CoFiBertSelfOutput(cfg)
         self.cfg = cfg
+        self.pruned_heads = set()
 
     def prune_heads(self, heads):
         len_heads = len(heads)
@@ -201,8 +339,8 @@ class CoFiMultiheadAttention(BertAttention):
             return
 
         heads, index = find_pruneable_heads_and_indices(
-            heads, self.self.num_attention_heads, self.self.attention_head_size, self.pruned_heads
-        )
+            heads, self.self.num_attention_heads,
+            self.self.attention_head_size, self.pruned_heads)
 
         # Prune linear layers
         if len(index) == 0:
@@ -214,7 +352,9 @@ class CoFiMultiheadAttention(BertAttention):
             self.self.query = prune_linear_layer(self.self.query, index)
             self.self.key = prune_linear_layer(self.self.key, index)
             self.self.value = prune_linear_layer(self.self.value, index)
-            self.output.dense = prune_linear_layer(self.output.dense, index, dim=1)
+            self.output.dense = prune_linear_layer(self.output.dense,
+                                                   index,
+                                                   dim=1)
 
         # Update hyper params and store pruned heads
         self.self.num_attention_heads = self.self.num_attention_heads - \
@@ -223,37 +363,40 @@ class CoFiMultiheadAttention(BertAttention):
             self.self.num_attention_heads
         self.pruned_heads = self.pruned_heads.union(heads)
 
-    def forward(
-        self,
-        hidden_states,
-        attention_mask=None,
-        output_attentions=False,
-        head_z=None,
-        head_layer_z=None,
-        hidden_z=None
-    ):
+    def forward(self,
+                hidden_states,
+                attention_mask=None,
+                output_attentions=True,
+                head_z=None,
+                head_layer_z=None,
+                hidden_z=None):
         self_outputs = self.self(
             hidden_states,
             attention_mask,
             output_attentions,
             head_z=head_z,
         )
-        attention_output = self.output(self_outputs[0], hidden_states, head_layer_z=head_layer_z, hidden_z=hidden_z)
-        outputs = (attention_output,) + self_outputs[1:]
+        attention_output = self.output(self_outputs[0],
+                                       hidden_states,
+                                       head_layer_z=head_layer_z,
+                                       hidden_z=hidden_z)
+        outputs = (attention_output, ) + self_outputs[1:]
         return outputs
 
-class CoFiSelfAttention(BertSelfAttention):
+
+class CoFiSelfAttention(nn.Module):
     def __init__(self, cfg):
-        super().__init__(cfg)
-        if cfg.hidden_size % cfg.num_attention_heads != 0 and not hasattr(cfg, "embedding_size"):
+        super().__init__()
+        if cfg.hidden_size % cfg.num_attention_heads != 0 and not hasattr(
+                cfg, "embedding_size"):
             raise ValueError(
                 "The hidden size (%d) is not a multiple of the number of attention "
-                "heads (%d)" % (cfg.hidden_size, cfg.num_attention_heads)
-            )
+                "heads (%d)" % (cfg.hidden_size, cfg.num_attention_heads))
         self.cfg = cfg
 
         self.num_attention_heads = cfg.num_attention_heads
-        self.attention_head_size = int(cfg.hidden_size / cfg.num_attention_heads)
+        self.attention_head_size = int(cfg.hidden_size /
+                                       cfg.num_attention_heads)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
 
         self.query = nn.Linear(cfg.hidden_size, self.all_head_size)
@@ -273,10 +416,10 @@ class CoFiSelfAttention(BertSelfAttention):
     def forward(self,
                 hidden_states,
                 attention_mask=None,
-                output_attentions=False,
+                output_attentions=True,
                 head_z=None):
         if self.value is None:
-            return (None, None) if output_attentions else (None,)
+            return (None, None) if output_attentions else (None, )
 
         query_hidden_states = hidden_states
         mixed_query_layer = self.query(query_hidden_states)
@@ -290,13 +433,13 @@ class CoFiSelfAttention(BertSelfAttention):
         batch_size, seq_length, _ = hidden_states.shape
 
         if not hasattr(self, "ones"):
-            self.ones = torch.ones(batch_size, seq_length, seq_length).float().to(
-                hidden_states.device)
+            self.ones = torch.ones(batch_size, seq_length,
+                                   seq_length).float().to(hidden_states.device)
 
         query_layer = self.transpose_for_scores(mixed_query_layer)
         key_layer = self.transpose_for_scores(mixed_key_layer)
-        attention_scores = torch.matmul(
-            query_layer, key_layer.transpose(-1, -2))
+        attention_scores = torch.matmul(query_layer,
+                                        key_layer.transpose(-1, -2))
 
         attention_scores = attention_scores / \
             math.sqrt(self.attention_head_size)
@@ -313,36 +456,55 @@ class CoFiSelfAttention(BertSelfAttention):
             context_layer *= head_z
 
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
-        new_context_layer_shape = context_layer.size(
-        )[:-2] + (context_layer.shape[-1] * context_layer.shape[-2],)
+        new_context_layer_shape = context_layer.size()[:-2] + (
+            context_layer.shape[-1] * context_layer.shape[-2], )
         context_layer = context_layer.view(*new_context_layer_shape)
 
-        outputs = (context_layer, attention_probs) if output_attentions else (
-            context_layer,)
+        outputs = (context_layer,
+                   attention_probs) if output_attentions else (context_layer, )
         return outputs
 
 
 class CoFiPostProj(nn.Module):
-    def __init__(self):
-        self.dense = nn.Linear(512,768)
+    def __init__(self, cfg):
+        super().__init__()
+        self.dense = nn.Linear(cfg.feature_extractor_dim, cfg.hidden_size)
+        self.LayerNorm = CoFiLayerNorm(cfg.hidden_size, eps=cfg.layer_norm_eps)
 
     def forward(self, feature_extractor_output, hidden_z):
         post_proj_output = self.dense(feature_extractor_output)
         if hidden_z is not None:
             post_proj_output = post_proj_output.mul(hidden_z)
+        post_proj_output = self.LayerNorm(post_proj_output, hidden_z)
         return post_proj_output
 
 
-class CoFiOutput(BertOutput): # 3072 -> 768
+class CoFiIntermediate(nn.Module):
     def __init__(self, cfg):
-        super().__init__(cfg)
+        super().__init__()
+        self.dense = nn.Linear(cfg.hidden_size, cfg.intermediate_size)
+        self.intermediate_act_fn = nn.GELU()
+
+    def forward(self, hidden_states):
+        hidden_states = self.dense(hidden_states)
+        hidden_states = self.intermediate_act_fn(hidden_states)
+        return hidden_states
+
+
+class CoFiOutput(nn.Module):  # 3072 -> 768
+    def __init__(self, cfg):
+        super().__init__()
         self.dense = nn.Linear(cfg.intermediate_size, cfg.hidden_size)
-        self.LayerNorm = CoFiLayerNorm(
-            cfg.hidden_size, eps=cfg.layer_norm_eps)
+        self.LayerNorm = CoFiLayerNorm(cfg.hidden_size, eps=cfg.layer_norm_eps)
         self.dropout = nn.Dropout(cfg.hidden_dropout_prob)
         self.cfg = cfg
 
-    def forward(self, hidden_states, input_tensor, mlp_z, hidden_z=None, inference=False):
+    def forward(self,
+                hidden_states,
+                input_tensor,
+                mlp_z,
+                hidden_z=None,
+                inference=False):
         hidden_states = self.dense(hidden_states)
         if mlp_z is not None:
             hidden_states *= mlp_z
@@ -352,19 +514,26 @@ class CoFiOutput(BertOutput): # 3072 -> 768
             if hidden_z is not None:
                 hidden_states = hidden_states.mul(hidden_z)
             hidden_states = self.dropout(hidden_states)
+            hidden_states = self.LayerNorm(
+                hidden_states + input_tensor, hidden_z)
             if hidden_z is not None:
                 hidden_states = hidden_states.mul(hidden_z)
         return hidden_states
 
-class CoFiBertSelfOutput(BertSelfOutput): # 768 -> 768 (inside the multihead attention)
+
+class CoFiBertSelfOutput(nn.Module):  # 768 -> 768 (inside the multihead attention)
     def __init__(self, cfg):
-        super().__init__(cfg)
+        super().__init__()
         self.dense = nn.Linear(cfg.hidden_size, cfg.hidden_size)
-        self.LayerNorm = CoFiLayerNorm(
-            cfg.hidden_size, eps=cfg.layer_norm_eps)
+        self.LayerNorm = CoFiLayerNorm(cfg.hidden_size, eps=cfg.layer_norm_eps)
         self.cfg = cfg
 
-    def forward(self, hidden_states, input_tensor, head_layer_z=None, hidden_z=None, inference=False):
+    def forward(self,
+                hidden_states,
+                input_tensor,
+                head_layer_z=None,
+                hidden_z=None,
+                inference=False):
         if hidden_states is None:
             return input_tensor
         hidden_states = self.dense(hidden_states)
@@ -375,29 +544,35 @@ class CoFiBertSelfOutput(BertSelfOutput): # 768 -> 768 (inside the multihead att
         else:
             if hidden_z is not None:
                 hidden_states = hidden_states.mul(hidden_z)
-            hidden_states = self.LayerNorm(
-                hidden_states + input_tensor, hidden_z)
+            hidden_states = self.LayerNorm(hidden_states + input_tensor,
+                                           hidden_z)
             if hidden_z is not None:
                 hidden_states = hidden_states.mul(hidden_z)
         return hidden_states
 
+
 class CoFiLayerNorm(torch.nn.LayerNorm):
-    def __init__(self, normalized_shape, eps: float = 1e-5, elementwise_affine: bool = True) -> None:
+    def __init__(self,
+                 normalized_shape,
+                 eps: float = 1e-5,
+                 elementwise_affine: bool = True) -> None:
         super().__init__(normalized_shape, eps, elementwise_affine)
 
     def forward(self, input, hidden_z=None):
         if hidden_z is not None:
             remaining_index = torch.where(~hidden_z.eq(0))[0]
-            compressed_input = torch.index_select(
-                input, dim=-1, index=remaining_index)
+            compressed_input = torch.index_select(input,
+                                                  dim=-1,
+                                                  index=remaining_index)
             compressed_weight = self.weight[remaining_index]
             compressed_bias = self.bias[remaining_index]
             normalized_shape = len(remaining_index)
-            normed_input = F.layer_norm(
-                compressed_input, [normalized_shape], compressed_weight, compressed_bias, self.eps)
+            normed_input = F.layer_norm(compressed_input, [normalized_shape],
+                                        compressed_weight, compressed_bias,
+                                        self.eps)
             output = input.clone()
             output[:, :, remaining_index] = normed_input
         else:
-            output = F.layer_norm(
-                input, self.normalized_shape, self.weight, self.bias, self.eps)
+            output = F.layer_norm(input, self.normalized_shape, self.weight,
+                                  self.bias, self.eps)
         return output

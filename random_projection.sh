@@ -1,1 +1,0 @@
-python3 fairseq_cli/hydra_train.py -m --config-dir examples/random_projection/config --config-name pretrain task.data=/home/nullptr/open-source/fairseq/dataset common.user_dir=/home/nullptr/open-source/fairseq/examples/random_projection  hydra.run.dir=hydra_test
