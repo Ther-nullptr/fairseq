@@ -140,8 +140,15 @@ class HubertAsrConfig(FairseqDataclass):
     )
     normalize: bool = II("task.normalize")
     data: str = II("task.data")
-    encoder_layers: int = field(default = 12, metadata = {"help": "layer num"})
+
+    # rnn
     use_rnn: bool = field(default = False, metadata = {"help": "use rnn"})
+    rnn_dim: int = field(default = 1024, metadata = {"help": "rnn dim"})
+    rnn_dropout_ratio: float = field(default=0.2, metadata={"help": "rnn dropout ratio"})
+
+    # featurizer
+    use_featurizer: bool = field(default = False, metadata = {"help": "use featurizer"})
+    encoder_layers: int = field(default = 12, metadata = {"help": "layer num"})
 
     # this holds the loaded hubert args
     w2v_args: Any = None
@@ -398,12 +405,11 @@ class HubertEncoder(FairseqEncoder):
 
         if cfg.use_rnn:
             self.use_rnn = True
-            self.rnn_projector = nn.Linear(in_features=768, out_features=1024, bias=True)
-            self.rnn1 = nn.LSTM(1024, 1024, batch_first=True, bidirectional=True)
-            self.rnn1_dropout = nn.Dropout(0.2)
-            self.rnn2 = nn.LSTM(2048, 1024, batch_first=True, bidirectional=True)
-            self.rnn2_dropout = nn.Dropout(0.2)
-            self.rnn_linear = nn.Linear(in_features=2048, out_features=32, bias=True)
+            self.rnn = SuperbRNN(cfg=cfg, task=task)
+        
+        if cfg.use_featurizer:
+            self.use_featurizer = True
+            self.featurizer = SuperbFeaturlizer(cfg=cfg)
 
     def set_num_updates(self, num_updates):
         """Set the number of parameters updates."""
@@ -422,37 +428,23 @@ class HubertEncoder(FairseqEncoder):
 
         with torch.no_grad() if not ft else contextlib.ExitStack():
             # logger.info(f'before hubert encoder:{source.shape}')
-            x, padding_mask = self.w2v_model.extract_features(**w2v_args)
+            x, layer_results = self.w2v_model.extract_features(**w2v_args)
             # logger.info(f'after hubert encoder:{x.shape}')
             if tbc:
                 # B x T x C -> T x B x C
                 x = x.transpose(0, 1)
                 # logger.info(f'after transpose in hubert encoder:{x.shape}')
 
+        if self.use_featurizer:
+            x = self.featurizer(layer_results)
+
         x = self.final_dropout(x)
 
         if self.proj:
             if self.use_rnn == False:
                 x = self.proj(x)
-            # logger.info(f'after proj in hubert encoder:{x.shape}')
             else:
-                x = x.transpose(0, 1) # B x T x C
-                x = self.rnn_projector(x)
-
-                length1 = torch.IntTensor(x.shape[0] * [x.shape[1]])
-                x = pack_padded_sequence(x, length1, batch_first=True, enforce_sorted=False)
-                x, _ = self.rnn1(x)
-                x, _ = pad_packed_sequence(x, batch_first=True)
-                x = self.rnn1_dropout(x)
-                
-                length2 = torch.IntTensor(x.shape[0] * [x.shape[1]])
-                x = pack_padded_sequence(x, length2, batch_first=True, enforce_sorted=False)
-                x, _ = self.rnn2(x)
-                x, _ = pad_packed_sequence(x, batch_first=True)
-                x = self.rnn2_dropout(x)
-
-                x = x.transpose(0, 1) # T x B x C
-                x = self.rnn_linear(x)
+                x = self.rnn(x)
 
         return {
             "encoder_out": x,  # T x B x C
@@ -697,6 +689,61 @@ class TransformerDecoder(FairseqIncrementalDecoder):
 
     def upgrade_state_dict_named(self, state_dict, name):
         return state_dict
+
+# RNN layers in superb
+class SuperbRNN(nn.Module):
+    def __init__(self, cfg: HubertAsrConfig, task):
+        self.encoder_embed_dim = cfg.encoder_embed_dim
+        self.rnn_dim = cfg.rnn_dim
+        self.rnn_dropout_ratio = cfg.rnn_dropout_ratio
+
+        self.rnn_projector = Linear(in_features=self.encoder_embed_dim, out_features=self.rnn_dim, bias=True)
+        self.rnn1 = nn.LSTM(self.rnn_dim, self.rnn_dim, batch_first=True, bidirectional=True)
+        self.rnn1_dropout = nn.Dropout(self.rnn_dropout_ratio)
+        self.rnn2 = nn.LSTM(self.rnn_dim*2, self.rnn_dim, batch_first=True, bidirectional=True)
+        self.rnn2_dropout = nn.Dropout(self.rnn_dropout_ratio)
+        self.rnn_linear = Linear(in_features=self.rnn_dim*2, out_features=len(task.target_dictionary), bias=True)
+
+    def forward(self, x):
+        x = x.transpose(0, 1) # B x T x C
+        x = self.rnn_projector(x)
+
+        length1 = torch.IntTensor(x.shape[0] * [x.shape[1]])
+        x = pack_padded_sequence(x, length1, batch_first=True, enforce_sorted=False)
+        x, _ = self.rnn1(x)
+        x, _ = pad_packed_sequence(x, batch_first=True)
+        x = self.rnn1_dropout(x)
+        
+        length2 = torch.IntTensor(x.shape[0] * [x.shape[1]])
+        x = pack_padded_sequence(x, length2, batch_first=True, enforce_sorted=False)
+        x, _ = self.rnn2(x)
+        x, _ = pad_packed_sequence(x, batch_first=True)
+        x = self.rnn2_dropout(x)
+
+        x = x.transpose(0, 1) # T x B x C
+        x = self.rnn_linear(x)
+
+        return x
+
+# featurlizer in superb 
+class SuperbFeaturlizer(nn.Module):
+    def __init__(self, cfg: HubertAsrConfig):
+        self.layer_num = cfg.encoder_layers + 1
+        self.weights = nn.Parameter(torch.zeros(self.layer_num))
+    
+    def weighted_sum(self, feature_list):
+        stacked_feature = torch.stack(feature_list, dim=0)
+        _, *origin_shape = stacked_feature.shape
+        stacked_feature = stacked_feature.view(self.layer_num, -1)
+        norm_weights = F.softmax(self.weights, dim=-1)
+        weighted_feature = (norm_weights.unsqueeze(-1) * stacked_feature).sum(dim=0)
+        weighted_feature = weighted_feature.view(*origin_shape)
+
+        return weighted_feature
+
+    def forward(self, feature_list):
+        feature = self._weighted_sum(feature_list)
+        return feature
 
 
 def Embedding(num_embeddings, embedding_dim, padding_idx):

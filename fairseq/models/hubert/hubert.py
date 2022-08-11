@@ -545,8 +545,10 @@ class HubertModel(BaseFairseqModel):
             features_only=True,
             output_layer=output_layer,
         )
-        feature = res["features"] if ret_conv else res["x"]
-        return feature, res["padding_mask"]
+        # feature = res["features"] if ret_conv else res["x"]
+        # return feature, res["padding_mask"]
+
+        return res['features'], res['layer_results']      # WYJ modified
 
     def get_logits(self, net_output, is_masked=True):
         if is_masked:
