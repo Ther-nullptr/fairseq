@@ -5,6 +5,8 @@ from black import main
 import torch
 import math
 import numpy as np
+import wandb
+
 import torch.nn.functional as F
 from torch.nn.modules import Module
 from torch.nn.parameter import Parameter
@@ -12,7 +14,7 @@ from torch.autograd import Variable
 import logging
 logger = logging.getLogger(__name__)
 
-limit_a, limit_b, epsilon = -.1, 1.1, 1e-6
+limit_a, limit_b, epsilon = -0.1, 1.1, 1e-6
 
 class L0Module(Module):
     def __init__(self,
@@ -68,8 +70,8 @@ class L0Module(Module):
 
         self.magical_number = magical_number
 
-        self.lambda_1 = torch.nn.Parameter(torch.tensor(0.1))
-        self.lambda_2 = torch.nn.Parameter(torch.tensor(0.1))
+        self.lambda_1 = torch.nn.Parameter(torch.tensor(0.0))
+        self.lambda_2 = torch.nn.Parameter(torch.tensor(0.0))
 
         self.lagrangian_warmup = lagrangian_warmup
         self.start_sparsity = start_sparsity
@@ -264,12 +266,11 @@ class L0Module(Module):
         expected_sparsity = 1 - expected_size / self.prunable_model_size
         if self.lagrangian_warmup > 0:
             target_sparsity = self.get_target_sparsity(pruned_steps)
-        print(f'record:{self.lambda_1}, {self.lambda_2}, {expected_sparsity}, {target_sparsity}')
         lagrangian_loss = ( #! see appendix
                 self.lambda_1 * (expected_sparsity - target_sparsity)
                 + self.lambda_2 * (expected_sparsity - target_sparsity) ** 2 #! where is the lambda 1 and lambda 2 from
         )
-        print(expected_size, self.prunable_model_size, expected_sparsity, target_sparsity)
+        wandb.log({'lambda_1':float(self.lambda_1),'lambda_2':float(self.lambda_2),'expected_sparsity':expected_sparsity,'target_sparsity':target_sparsity})
         return lagrangian_loss, expected_sparsity, target_sparsity
 
     def get_eps(self, size):

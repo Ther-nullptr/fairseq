@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class CofiAdamConfig(FairseqDataclass):
     adam_betas: Any = field(
-        default=(0.9, 0.999), metadata={"help": "betas for Adam optimizer"}
+        default='(0.9, 0.999)', metadata={"help": "betas for Adam optimizer"}
     )
     adam_eps: float = field(
         default=1e-8, metadata={"help": "epsilon for Adam optimizer"}
@@ -43,11 +43,11 @@ class CofiAdamConfig(FairseqDataclass):
         default=2e-5, metadata={"help": "learning rate"}
     )
     reg_learning_rate: float = field(
-        default=0.01, metadata={"help": "reg learning rate"}
+        default=0.1, metadata={"help": "reg learning rate"}
     )
 
 
-@register_optimizer("adam", dataclass=CofiAdamConfig)
+@register_optimizer("cofi_adam", dataclass=CofiAdamConfig)
 class CofiAdam(FairseqOptimizer):
     """Adam optimizer for fairseq.
 
@@ -72,59 +72,30 @@ class CofiAdam(FairseqOptimizer):
                 "lr": self.cfg.learning_rate
             },
         ]
-        self.optimizer = torch.optim.AdamW(
-            main_model_params,
-            betas = self.cfg.adam_betas,
+
+        l0_params = [{
+            "params": params['l0_params'],
+            "weight_decay":
+            0.0,
+            "lr":
+            self.cfg.reg_learning_rate
+        }]
+
+        lagrangian_params = [{
+            "params": params['lagrangian_params'],
+            "weight_decay":
+            0.0,
+            "lr":
+            -self.cfg.reg_learning_rate
+        }]
+
+        self._optimizer = torch.optim.Adam(
+            main_model_params + l0_params + lagrangian_params,
+            betas = eval(self.cfg.adam_betas),
             eps = self.cfg.adam_eps
         )
-        if self.l0_module is not None:
-            l0_params = [{
-                "params": params['l0_params'],
-                "weight_decay":
-                0.0,
-                "lr":
-                self.cfg.reg_learning_rate
-            }]
-            self.l0_optimizer = torch.optim.AdamW(
-                l0_params,
-                betas=self.cfg.adam_betas,
-                eps=self.cfg.adam_eps,
-            )
 
-            lagrangian_params = [{
-                "params": params['lagrangian_params'],
-                "weight_decay":
-                0.0,
-                "lr":
-                -self.cfg.reg_learning_rate
-            }]
-            self.lagrangian_optimizer = torch.optim.AdamW(
-                lagrangian_params,
-                betas=self.cfg.adam_betas,
-                eps=self.cfg.adam_eps,
-            )
-
-    def step(self, closure=None, scale=1.0, groups=None):
-        if self.supports_step_with_scale:
-            if self.supports_groups:
-                self.optimizer.step(closure, scale=scale, groups=groups)
-                self.l0_optimizer.step(closure, scale=scale, groups=groups)
-                self.lagrangian_optimizer.step(closure, scale=scale, groups=groups)
-            else:
-                self.optimizer.step(closure, scale=scale)
-                self.l0_optimizer.step(closure, scale=scale)
-                self.lagrangian_optimizer.step(closure, scale=scale)
-        else:
-            if scale != 1.0:
-                self.multiply_grads(1.0 / scale)
-            if self.supports_groups:
-                self.optimizer.step(closure, groups=groups)
-                self.l0_optimizer.step(closure, groups=groups)
-                self.lagrangian_optimizer.step(closure, groups=groups)
-            else:
-                self.optimizer.step(closure)
-                self.l0_optimizer.step(closure)
-                self.lagrangian_optimizer.step(closure)
+        print(self._optimizer)
 
     @property
     def optimizer_config(self):

@@ -2,7 +2,7 @@ from black import main
 import torch
 import os
 from transformers.modeling_utils import prune_linear_layer
-from transformers import AutoConfig, hubertForSequenceClassification
+from transformers import AutoConfig, BertForSequenceClassification
 from transformers.file_utils import hf_bucket_url, cached_path
 
 from .utils import calculate_parameters
@@ -145,7 +145,9 @@ def prune_model_with_z(zs, model):
     hubert = model.w2v_model
     if "head_z" in zs:
         head_z = zs.get("head_z", None)
+        head_z = head_z.cpu()
         head_layer_z = zs.get("head_layer_z", None)
+        head_layer_z = head_layer_z.cpu()
         prune_heads = {}
         for layer in range(len(head_z)):
             head_z_layer = head_z[layer].cpu().squeeze().clone()
@@ -156,13 +158,13 @@ def prune_model_with_z(zs, model):
             print(
                 f"Layer {layer}, heads {' '.join([str(i) for i in index])} pruned."
             )
-        model.prune_heads(prune_heads)
+        hubert.prune_heads(prune_heads)
 
     kept_intermediate_dims = None
     if "intermediate_z" in zs:
         kept_intermediate_dims = {}
-        intermediate_zs = zs["intermediate_z"]
-        mlp_z = zs.get("mlp_z", None)
+        intermediate_zs = zs["intermediate_z"].cpu()
+        mlp_z = zs.get("mlp_z", None).cpu()
         for layer in range(len(intermediate_zs)):
             intermediate_z_layer = intermediate_zs[layer].squeeze()
             intermediate_z_layer = intermediate_z_layer.cpu().clone()
@@ -183,15 +185,15 @@ def prune_model_with_z(zs, model):
         return layer
 
     if "hidden_z" in zs:
-        hidden_zs = zs["hidden_z"]
+        hidden_zs = zs["hidden_z"].cpu()
         index = torch.LongTensor(
             hidden_zs.squeeze().nonzero().squeeze().tolist())
-        index = index.to(model.device)
+        index = index.to('cpu')
 
         hubert.post_proj.weight = torch.nn.parameter.Parameter(
-            hubert.post_proj.weight.index_select(1, index).clone().detach())
+            hubert.post_proj.dense.weight.index_select(0, index).clone().detach())
         hubert.post_proj.bias = torch.nn.parameter.Parameter(
-            hubert.post_proj.bias.index_select(1, index).clone().detach())
+            hubert.post_proj.dense.bias.index_select(0, index).clone().detach())
 
         for layer in range(0, 12):
             if hubert.encoder.layer[layer].attention.self.query is not None:
@@ -265,7 +267,7 @@ def prune_model_with_z(zs, model):
 
 def prune_intermediate_layers(model, keep_dims):
     hubert = model.w2v_model
-    device = model.device
+    device = 'cpu'
     for layer in keep_dims:
         if len(keep_dims[layer]) == 0:
             hubert.encoder.layer[layer].intermediate.dense = None

@@ -49,11 +49,9 @@ class CoFiHubertTeaStuConfig(CoFiHubertConfig):
         default=None, metadata={"help": "the path to save l0 and zs"})
     label_dir: Optional[str] = field(default=None,
                                      metadata={"help": "label dir"})
-    prepruning_finetune_steps: int = field(
-        default=100, metadata={"help": "prepruning finetune steps"})
     hidden_size: int = field(default=768,
                              metadata={"help": "prepruning finetune steps"})
-    vocab_size: int = field(default=32, metadata={"help": "vocab size"})
+    vocab_size: int = field(default=2, metadata={"help": "vocab size"})
     do_layer_distill: bool = field(default=True,
                                    metadata={"help": "do layer distill"})
     is_decoder: bool = field(default=False, metadata={"help": "is decoder"})
@@ -65,8 +63,9 @@ class CoFiHubertTeaStuConfig(CoFiHubertConfig):
                                      metadata={"help": "num attention heads"})
     num_hidden_layers: int = field(default=12,
                                    metadata={"help": "num hidden layers"})
-    lagrangian_warmup_steps: int = field(default = 200, metadata={"help": "lagrangian warmup steps"})
-
+    prepruning_finetune_steps: int = field(default = 1, metadata={"help": "prepruning finetune steps"})
+    lagrangian_warmup_steps: int = field(default = 2, metadata={"help": "lagrangian warmup steps"})
+    
 
 @register_model("cofi_hubert_tea_stu", dataclass=CoFiHubertTeaStuConfig)
 class CoFiHubertTeaStu(BaseFairseqModel):
@@ -95,8 +94,8 @@ class CoFiHubertTeaStu(BaseFairseqModel):
         student_model = CoFiHubertForASR(cfg)
         # load model with local finetuned-model
         logger.info('load finetuned model of hubert')
-        ft_hubert_model = torch.load(cfg.model_path)
-        ft_hubert_model = ft_hubert_model['model']
+        ft_hubert_full_model = torch.load(cfg.model_path)
+        ft_hubert_model = ft_hubert_full_model['model']
         logger.info('copy params to cofi')
         # feature_extractor
         logger.info('initial feature extractor')
@@ -175,12 +174,13 @@ class CoFiHubertTeaStu(BaseFairseqModel):
         logger.info('initial final proj')
         state_dict['proj.weight'] = ft_hubert_model[f'w2v_encoder.proj.weight']
         state_dict['proj.bias'] = ft_hubert_model[f'w2v_encoder.proj.bias']
+        del ft_hubert_model
         return cls(cfg, student_model)
 
     def forward(self, raw_inputs):
         inputs = {}
         inputs['input_raw_data'] = raw_inputs['net_input']['source']
-        if (1):
+        if (self.steps > self.prepruning_finetune_steps):
             self.start_prune = True
         if (self.start_prune):
             zs = self.l0_module.forward(training=True)
@@ -202,16 +202,28 @@ class CoFiHubertTeaStu(BaseFairseqModel):
         student_outputs = self.student_model(inputs)  #! get the two outputs
 
         zs = {key: inputs[key] for key in inputs if "_z" in key}
-        self.steps += 1
-        if (self.steps % 500 == 0 and self.start_prune):
+        zs = self.l0_module.forward(training=False)
+        print(f'step:{self.steps}')
+        for key in zs.keys():
+            print(zs[key].mean())
+        
+        if (self.steps % 100 == 0):
             logger.info(f'save zs and l0_module in {self.steps}')
             zs = self.l0_module.forward(training=False)
-            print(f'zs:{zs}')
+            # print(f'zs:{zs}')
             if not os.path.exists(self.save_best_path):
                 os.makedirs(self.save_best_path)
-            torch.save(zs, os.path.join(self.save_best_path, "zs.pt"))
+            torch.save(zs, os.path.join(self.save_best_path, f"zs__{self.steps}.pt"))
             torch.save(self.l0_module,
-                       os.path.join(self.save_best_path, "l0_module.pt"))
+                       os.path.join(self.save_best_path, f"l0_module__{self.steps}.pt"))
+            print(f"Model Size before pruning: {calculate_parameters(self.student_model)}")
+            model_to_save = CoFiHubertForASR(self.cfg)
+            model_to_save = model_to_save.cpu()
+            model_to_save.load_state_dict(self.student_model.state_dict())
+            prune_model_with_z(zs, model_to_save)
+            print(f"Model Size after pruning: {calculate_parameters(model_to_save)}")
+            del model_to_save
+        self.steps += 1
         return teacher_outputs, student_outputs, zs
 
     def fill_inputs_with_zs(self, zs, inputs):
@@ -223,7 +235,7 @@ class CoFiHubertForASR(nn.Module):
     def __init__(self, cfg: CoFiHubertConfig):
         super().__init__()
         self.w2v_model = CoFiHubertModel(cfg)
-        self.proj = CoFiLinear(cfg.hidden_size, 32)
+        self.proj = CoFiLinear(cfg.hidden_size, cfg.vocab_size)
         self.layer_transformation = nn.Linear(cfg.hidden_size, cfg.hidden_size)
 
     def forward(self, inputs):

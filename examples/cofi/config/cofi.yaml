@@ -32,7 +32,7 @@ task:
 
 dataset:
   num_workers: 0
-  max_tokens: 3200000
+  max_tokens: 1000000
   validate_after_updates: 100000
   validate_interval: 5
   train_subset: train
@@ -43,13 +43,13 @@ criterion:
 
 optimization:
   max_update: 80000
-  lr: [2e-5]
+  lr: [2e-4]
   sentence_avg: true
   update_freq: [1]
 
 optimizer:
-  _name: adam
-  adam_betas: (0.9,0.98)
+  _name: cofi_adam
+  adam_betas: (0.9,0.999)
   adam_eps: 1e-08
 
 lr_scheduler:

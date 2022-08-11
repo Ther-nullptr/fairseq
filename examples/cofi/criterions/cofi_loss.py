@@ -20,7 +20,6 @@ from fairseq.dataclass import FairseqDataclass
 from fairseq.data.data_utils import post_process
 from fairseq.tasks import FairseqTask
 from fairseq.logging.meters import safe_round
-from transformers.trainer import Trainer
 import wandb
 
 logger = logging.getLogger(__name__)
@@ -52,13 +51,13 @@ class CoFiCriterionConfig(FairseqDataclass):
         },
     )
     distill_ce_loss_alpha: float = field(
-        default=0.1,
+        default=5,
         metadata={
             "help": "distill ce loss alpha"
         },
     )
     distill_loss_alpha: float = field(
-        default=0.9,
+        default=5,
         metadata={
             "help": "distill loss alpha"
         },
@@ -97,13 +96,8 @@ class CoFiCriterion(FairseqCriterion):
         distill_ce_loss = None
         distill_loss, distill_ce_loss, loss = self.calculate_distillation_loss(model, teacher_outputs, student_outputs, zs)
 
-        if 1:
-        # if (self.steps >= self.prepruning_finetune_steps):
-            print('start pruning!')
-            self.start_prune = True
-
         lagrangian_loss = None
-        if self.start_prune:
+        if model.start_prune:
             lagrangian_loss, _, _ = \
                 model.l0_module.lagrangian_regularization(self.steps - self.prepruning_finetune_steps)
             loss += lagrangian_loss
@@ -115,15 +109,16 @@ class CoFiCriterion(FairseqCriterion):
         )
 
         sample_size = sample["target"].size(0)
+        print(f'loss:{loss}, lagrangian_loss:{lagrangian_loss}, distill_layer_loss:{distill_loss}, distill_ce_loss:{distill_ce_loss}')
         
         logging_output = {
             "loss": utils.item(loss.data),  # * sample['ntokens'],
             "ntokens": ntokens,
             "nsentences": sample["id"].numel(),
             "sample_size": sample_size,
-            "distill_loss": distill_loss,
-            "distill_ce_loss": distill_ce_loss,
-            "lagrangian_loss": lagrangian_loss
+            "distill_loss": float(distill_loss),
+            "distill_ce_loss": float(distill_ce_loss),
+            "lagrangian_loss": None if lagrangian_loss == None else float(lagrangian_loss)
         }
         self.steps += 1
         return loss, sample_size, logging_output
@@ -141,7 +136,7 @@ class CoFiCriterion(FairseqCriterion):
         loss = self.distill_ce_loss_alpha * ce_distill_loss
         if distill_loss is not None:
             loss += self.distill_loss_alpha * distill_loss
-
+        wandb.log({'distill_loss':distill_loss,'ce_distill_loss':ce_distill_loss,'loss':loss})
         return distill_loss, ce_distill_loss, loss
 
     def calculate_layer_distillation_loss(self, model, teacher_outputs, student_outputs, zs):

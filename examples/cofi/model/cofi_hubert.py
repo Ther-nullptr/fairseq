@@ -162,20 +162,19 @@ class CoFiHubertConfig(Wav2Vec2Config):
         metadata={"help": "legacy (to be removed)"},
     )
 
-
 @register_model("hubert_cofi", dataclass=CoFiHubertConfig)
 class CoFiHubertModel(BaseFairseqModel, ModuleUtilsMixin):  # top module
     def __init__(self, cfg):
         super().__init__()
-        self.encoder = CoFiTransformerEncoder(cfg)
-        self.pooler = CoFiPooler(cfg)
-        self.post_proj = CoFiPostProj(cfg)
         self.feature_extractor = ConvFeatureExtractionModel(
             conv_layers=eval(cfg.conv_feature_layers),
             dropout=0.0,
             mode=cfg.extractor_mode,
             conv_bias=cfg.conv_bias,
         )
+        self.post_proj = CoFiPostProj(cfg)
+        self.encoder = CoFiTransformerEncoder(cfg)
+        self.pooler = CoFiPooler(cfg)
 
     def forward(self,
                 input_raw_data=None,
@@ -190,7 +189,7 @@ class CoFiHubertModel(BaseFairseqModel, ModuleUtilsMixin):  # top module
         device = input_raw_data.device
         with torch.no_grad():
             feature_extractor_output = self.feature_extractor(input_raw_data)
-        feature_extractor_output = feature_extractor_output.transpose(1, 2)
+            feature_extractor_output = feature_extractor_output.transpose(1, 2)
         post_proj_output = self.post_proj(feature_extractor_output, hidden_z)
         post_proj_shape = post_proj_output.size()
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
@@ -216,6 +215,10 @@ class CoFiHubertModel(BaseFairseqModel, ModuleUtilsMixin):  # top module
         sequence_output = encoder_outputs[0]
         pooled_output = self.pooler(sequence_output)
         return (sequence_output, pooled_output) + encoder_outputs[1:]
+
+    def prune_heads(self, heads_to_prune: Dict[int, List[int]]):
+        for layer, heads in heads_to_prune.items():
+            self.encoder.layer[layer].attention.prune_heads(heads)
 
 
 class CoFiPooler(nn.Module):
@@ -280,8 +283,8 @@ class CoFiBertLayer(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.attention = CoFiMultiheadAttention(cfg)
-        self.output = CoFiOutput(cfg)
         self.intermediate = CoFiIntermediate(cfg)
+        self.output = CoFiOutput(cfg)
         self.cfg = cfg
 
     def forward(self,
@@ -305,9 +308,6 @@ class CoFiBertLayer(nn.Module):
         # add self attentions if we output attention weights
         outputs = self_attention_outputs[1:]
 
-        # if self.intermediate.dense is None:
-        #     layer_output = attention_output
-        # else:
         self.intermediate_z = intermediate_z
         self.mlp_z = mlp_z
         self.hidden_z = hidden_z
@@ -319,9 +319,6 @@ class CoFiBertLayer(nn.Module):
     def feed_forward_chunk(self, attention_output):
         intermediate_output = self.intermediate(attention_output)
         if self.intermediate_z is not None:
-            print(
-                f'intermediate_z:{self.intermediate_z.shape}, intermediate_output:{intermediate_output.shape}'
-            )
             intermediate_output = intermediate_output.mul(self.intermediate_z)
         layer_output = self.output(intermediate_output, attention_output,
                                    self.mlp_z, self.hidden_z)
@@ -334,6 +331,7 @@ class CoFiMultiheadAttention(nn.Module):
         self.self = CoFiSelfAttention(cfg)
         self.output = CoFiBertSelfOutput(cfg)
         self.cfg = cfg
+        self.pruned_heads = set()
 
     def prune_heads(self, heads):
         len_heads = len(heads)
@@ -455,8 +453,6 @@ class CoFiSelfAttention(nn.Module):
         value_layer = self.transpose_for_scores(mixed_value_layer)
         context_layer = torch.matmul(attention_probs, value_layer)
         if head_z is not None:
-            print(
-                f'head_z:{head_z.shape}, context_layer:{context_layer.shape}')
             context_layer *= head_z
 
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
@@ -473,11 +469,13 @@ class CoFiPostProj(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.dense = nn.Linear(cfg.feature_extractor_dim, cfg.hidden_size)
+        self.LayerNorm = CoFiLayerNorm(cfg.hidden_size, eps=cfg.layer_norm_eps)
 
     def forward(self, feature_extractor_output, hidden_z):
         post_proj_output = self.dense(feature_extractor_output)
         if hidden_z is not None:
             post_proj_output = post_proj_output.mul(hidden_z)
+        post_proj_output = self.LayerNorm(post_proj_output, hidden_z)
         return post_proj_output
 
 
@@ -485,7 +483,7 @@ class CoFiIntermediate(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.dense = nn.Linear(cfg.hidden_size, cfg.intermediate_size)
-        self.intermediate_act_fn = nn.functional.relu
+        self.intermediate_act_fn = nn.GELU()
 
     def forward(self, hidden_states):
         hidden_states = self.dense(hidden_states)
@@ -509,7 +507,6 @@ class CoFiOutput(nn.Module):  # 3072 -> 768
                 inference=False):
         hidden_states = self.dense(hidden_states)
         if mlp_z is not None:
-            print(f'hidden_states:{hidden_states.shape}, mlp_z:{mlp_z.shape}')
             hidden_states *= mlp_z
         if not inference and hidden_states.sum().eq(0).item():
             return hidden_states + input_tensor
@@ -517,13 +514,14 @@ class CoFiOutput(nn.Module):  # 3072 -> 768
             if hidden_z is not None:
                 hidden_states = hidden_states.mul(hidden_z)
             hidden_states = self.dropout(hidden_states)
+            hidden_states = self.LayerNorm(
+                hidden_states + input_tensor, hidden_z)
             if hidden_z is not None:
                 hidden_states = hidden_states.mul(hidden_z)
         return hidden_states
 
 
-class CoFiBertSelfOutput(nn.Module
-                         ):  # 768 -> 768 (inside the multihead attention)
+class CoFiBertSelfOutput(nn.Module):  # 768 -> 768 (inside the multihead attention)
     def __init__(self, cfg):
         super().__init__()
         self.dense = nn.Linear(cfg.hidden_size, cfg.hidden_size)
@@ -540,9 +538,6 @@ class CoFiBertSelfOutput(nn.Module
             return input_tensor
         hidden_states = self.dense(hidden_states)
         if head_layer_z is not None:
-            print(
-                f'hidden_states:{hidden_states.shape}, head_layer_z:{head_layer_z.shape}'
-            )
             hidden_states = hidden_states.mul(head_layer_z)
         if not inference and hidden_states.sum().eq(0).item():
             hidden_states = hidden_states + input_tensor
