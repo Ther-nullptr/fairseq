@@ -15,6 +15,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from omegaconf import II, MISSING, open_dict
 
 from fairseq import checkpoint_utils, tasks, utils
@@ -139,6 +140,8 @@ class HubertAsrConfig(FairseqDataclass):
     )
     normalize: bool = II("task.normalize")
     data: str = II("task.data")
+    encoder_layers: int = field(default = 12, metadata = {"help": "layer num"})
+    use_rnn: bool = field(default = False, metadata = {"help": "use rnn"})
 
     # this holds the loaded hubert args
     w2v_args: Any = None
@@ -393,6 +396,15 @@ class HubertEncoder(FairseqEncoder):
         else:
             self.proj = None
 
+        if cfg.use_rnn:
+            self.use_rnn = True
+            self.rnn_projector = nn.Linear(in_features=768, out_features=1024, bias=True)
+            self.rnn1 = nn.LSTM(1024, 1024, batch_first=True, bidirectional=True)
+            self.rnn1_dropout = nn.Dropout(0.2)
+            self.rnn2 = nn.LSTM(2048, 1024, batch_first=True, bidirectional=True)
+            self.rnn2_dropout = nn.Dropout(0.2)
+            self.rnn_linear = nn.Linear(in_features=2048, out_features=32, bias=True)
+
     def set_num_updates(self, num_updates):
         """Set the number of parameters updates."""
         super().set_num_updates(num_updates)
@@ -420,8 +432,27 @@ class HubertEncoder(FairseqEncoder):
         x = self.final_dropout(x)
 
         if self.proj:
-            x = self.proj(x)
+            if self.use_rnn == False:
+                x = self.proj(x)
             # logger.info(f'after proj in hubert encoder:{x.shape}')
+            else:
+                x = x.transpose(0, 1) # B x T x C
+                x = self.rnn_projector(x)
+
+                length1 = torch.IntTensor(x.shape[0] * [x.shape[1]])
+                x = pack_padded_sequence(x, length1, batch_first=True, enforce_sorted=False)
+                x, _ = self.rnn1(x)
+                x, _ = pad_packed_sequence(x, batch_first=True)
+                x = self.rnn1_dropout(x)
+                
+                length2 = torch.IntTensor(x.shape[0] * [x.shape[1]])
+                x = pack_padded_sequence(x, length2, batch_first=True, enforce_sorted=False)
+                x, _ = self.rnn2(x)
+                x, _ = pad_packed_sequence(x, batch_first=True)
+                x = self.rnn2_dropout(x)
+
+                x = x.transpose(0, 1) # T x B x C
+                x = self.rnn_linear(x)
 
         return {
             "encoder_out": x,  # T x B x C
