@@ -296,7 +296,7 @@ class Trainer(object):
         )
 
         #!! for cofi
-        if(self.model.l0_module != None):
+        if(hasattr(self.model, 'l0_module')):
             params = {}
             no_decay = ["bias", "LayerNorm.weight"]
             freeze_keywords = ["feature_extractor"]
@@ -304,7 +304,7 @@ class Trainer(object):
             main_model_params_1 = [p for n, p in self.model.student_model.named_parameters() if not any(nd in n for nd in no_decay) and not any(fk in n for fk in freeze_keywords)]
             main_model_params_2 = [p for n, p in self.model.student_model.named_parameters() if any(nd in n for nd in no_decay) and not any(fk in n for fk in freeze_keywords)]
             l0_params = [p for n, p in self.model.l0_module.named_parameters() if "lambda" not in n]
-            lagrangian_params = [p for n, p in self.l0_module.named_parameters() if "lambda" in n]
+            lagrangian_params = [p for n, p in self.model.l0_module.named_parameters() if "lambda" in n]
 
             logger.info("divide the params into 4 parts: main_model_params_1, main_model_params_2, l0_params, lagrangian_params")
 

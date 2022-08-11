@@ -5,7 +5,7 @@ common:
   log_format: json
   log_interval: 200
   tensorboard_logdir: tblog
-  wandb_project: hubert_finetune_rnn_100h
+  wandb_project: hubert_distill_100h
   seed: 1337
 
 checkpoint:
@@ -64,6 +64,7 @@ model:
   _name: hubert_ctc
   w2v_path: ???
   apply_mask: true
+  encoder_layers: 2
   mask_selection: static
   mask_length: 10
   mask_other: 0
@@ -78,7 +79,6 @@ model:
   attention_dropout: 0.0
   feature_grad_mult: 0.0
   freeze_finetune_updates: 10000
-  use_rnn: True
 
 hydra:
   job:
