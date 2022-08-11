@@ -16,7 +16,7 @@ cd ${work_dir}
 timestamp=`date +%Y-%m-%d-%H-%M`
 
 # !important setup wandb project
-wandb_project=hubert_rnn
+wandb_project=hubert_base_rnn_featurizer
 
 # stage 1: pretrain
 # stage 2: finetune
@@ -275,8 +275,8 @@ if [ ${model_name} == "hubert" ]; then
         config_finetune_name=base_100h
 
         # set pretrained model
-        output_dir=${work_dir}/outputs/hubert_rnn/${model_name}/${exp_name}/
-        pretrain_model_name=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/distiller.pt
+        output_dir=${work_dir}/outputs/${wandb_project}/${model_name}/${exp_name}/
+        pretrain_model_name=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/hubert_base.ls960.pt
         # pretrain_model_name=${output_dir}/checkpoints/checkpoint_36_25000.pt
 
         # set finetune data
@@ -295,7 +295,6 @@ if [ ${model_name} == "hubert" ]; then
         hydra.run.dir=${finetune_output_dir} \
         common.log_interval=10 \
         common.wandb_project=${wandb_project}
-
     fi
 
     if [ ${stage} -eq 3 ]; then
@@ -313,11 +312,11 @@ if [ ${model_name} == "hubert" ]; then
 
         # use lm
         use_kenlm=true
-        decode_data_type=dev-clean
+        decode_data_type=test-clean
 
         decode_data_path=/mnt/lustre/sjtu/home/xc915/superb/dataset/librispeech_finetuning_data/${decode_data_type}
         # decode_model_path=/userhome/user/chenxie95/github/fairseq/outputs/hubert/pretrained_models/checkpoint_best.pt
-        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/hubert-finetune/hubert-base-finetune-10min.pt
+        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/hubert_distill_rnn.pt
 
         if ${use_kenlm}; then
             cd ${code_dir} && python3 examples/speech_recognition/new/infer.py \

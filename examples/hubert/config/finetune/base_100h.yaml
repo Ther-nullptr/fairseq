@@ -79,6 +79,8 @@ model:
   feature_grad_mult: 0.0
   freeze_finetune_updates: 10000
   use_rnn: True
+  use_featurizer: True
+  encoder_layers: 12
 
 hydra:
   job:

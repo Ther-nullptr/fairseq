@@ -406,10 +406,14 @@ class HubertEncoder(FairseqEncoder):
         if cfg.use_rnn:
             self.use_rnn = True
             self.rnn = SuperbRNN(cfg=cfg, task=task)
+        else:
+            self.use_rnn = False
         
         if cfg.use_featurizer:
             self.use_featurizer = True
             self.featurizer = SuperbFeaturlizer(cfg=cfg)
+        else:
+            self.use_featurizer = False
 
     def set_num_updates(self, num_updates):
         """Set the number of parameters updates."""
@@ -428,7 +432,7 @@ class HubertEncoder(FairseqEncoder):
 
         with torch.no_grad() if not ft else contextlib.ExitStack():
             # logger.info(f'before hubert encoder:{source.shape}')
-            x, layer_results = self.w2v_model.extract_features(**w2v_args)
+            x, layer_results, padding_mask = self.w2v_model.extract_features(**w2v_args)
             # logger.info(f'after hubert encoder:{x.shape}')
             if tbc:
                 # B x T x C -> T x B x C
@@ -436,11 +440,15 @@ class HubertEncoder(FairseqEncoder):
                 # logger.info(f'after transpose in hubert encoder:{x.shape}')
 
         if self.use_featurizer:
-            x = self.featurizer(layer_results)
+            features = []
+            features.append(x.transpose(0, 1))
+            features.extend([lr[0].transpose(0, 1) for lr in layer_results])  # use the last output
+            x = self.featurizer(features)
 
         x = self.final_dropout(x)
 
         if self.proj:
+            x = x.transpose(0, 1)
             if self.use_rnn == False:
                 x = self.proj(x)
             else:
@@ -693,6 +701,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
 # RNN layers in superb
 class SuperbRNN(nn.Module):
     def __init__(self, cfg: HubertAsrConfig, task):
+        super().__init__()
         self.encoder_embed_dim = cfg.encoder_embed_dim
         self.rnn_dim = cfg.rnn_dim
         self.rnn_dropout_ratio = cfg.rnn_dropout_ratio
@@ -728,6 +737,7 @@ class SuperbRNN(nn.Module):
 # featurlizer in superb 
 class SuperbFeaturlizer(nn.Module):
     def __init__(self, cfg: HubertAsrConfig):
+        super().__init__()
         self.layer_num = cfg.encoder_layers + 1
         self.weights = nn.Parameter(torch.zeros(self.layer_num))
     
@@ -742,7 +752,7 @@ class SuperbFeaturlizer(nn.Module):
         return weighted_feature
 
     def forward(self, feature_list):
-        feature = self._weighted_sum(feature_list)
+        feature = self.weighted_sum(feature_list)
         return feature
 
 
