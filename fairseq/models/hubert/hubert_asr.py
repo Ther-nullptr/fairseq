@@ -404,15 +404,19 @@ class HubertEncoder(FairseqEncoder):
             self.proj = None
 
         if cfg.use_rnn:
+            print('use rnn')
             self.use_rnn = True
             self.rnn = SuperbRNN(cfg=cfg, task=task)
         else:
+            print('not use rnn')
             self.use_rnn = False
         
         if cfg.use_featurizer:
+            print('use featurizer')
             self.use_featurizer = True
             self.featurizer = SuperbFeaturlizer(cfg=cfg)
         else:
+            print('not use featurizer')
             self.use_featurizer = False
 
     def set_num_updates(self, num_updates):
@@ -432,7 +436,7 @@ class HubertEncoder(FairseqEncoder):
 
         with torch.no_grad() if not ft else contextlib.ExitStack():
             # logger.info(f'before hubert encoder:{source.shape}')
-            x, layer_results, padding_mask = self.w2v_model.extract_features(**w2v_args)
+            cnn_feature, x, layer_results, padding_mask = self.w2v_model.extract_features(**w2v_args)
             # logger.info(f'after hubert encoder:{x.shape}')
             if tbc:
                 # B x T x C -> T x B x C
@@ -441,18 +445,19 @@ class HubertEncoder(FairseqEncoder):
 
         if self.use_featurizer:
             features = []
-            features.append(x.transpose(0, 1))
+            features.append(cnn_feature) # T x B x C -> B x T x C
             features.extend([lr[0].transpose(0, 1) for lr in layer_results])  # use the last output
             x = self.featurizer(features)
 
         x = self.final_dropout(x)
 
         if self.proj:
-            x = x.transpose(0, 1)
+            if self.use_featurizer:
+                x = x.transpose(0, 1) # B x T x C -> T x B x C
             if self.use_rnn == False:
                 x = self.proj(x)
             else:
-                x = self.rnn(x)
+                x = self.rnn(x) # T x B x C
 
         return {
             "encoder_out": x,  # T x B x C
@@ -714,7 +719,7 @@ class SuperbRNN(nn.Module):
         self.rnn_linear = Linear(in_features=self.rnn_dim*2, out_features=len(task.target_dictionary), bias=True)
 
     def forward(self, x):
-        x = x.transpose(0, 1) # B x T x C
+        x = x.transpose(0, 1) # T x B x C -> B x T x C
         x = self.rnn_projector(x)
 
         length1 = torch.IntTensor(x.shape[0] * [x.shape[1]])
@@ -729,7 +734,7 @@ class SuperbRNN(nn.Module):
         x, _ = pad_packed_sequence(x, batch_first=True)
         x = self.rnn2_dropout(x)
 
-        x = x.transpose(0, 1) # T x B x C
+        x = x.transpose(0, 1) # B x T x C -> T x B x C
         x = self.rnn_linear(x)
 
         return x

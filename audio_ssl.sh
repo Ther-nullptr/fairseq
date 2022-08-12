@@ -16,12 +16,12 @@ cd ${work_dir}
 timestamp=`date +%Y-%m-%d-%H-%M`
 
 # !important setup wandb project
-wandb_project=hubert_base_rnn_featurizer
+wandb_project=hubert_rnn_only
 
 # stage 1: pretrain
 # stage 2: finetune
 # stage 3: decode
-stage=2
+stage=3
 
 # model_name need to be [wav2vec|hubert|data2vec]
 model_name=hubert
@@ -275,8 +275,10 @@ if [ ${model_name} == "hubert" ]; then
         config_finetune_name=base_100h
 
         # set pretrained model
+        pretrain_model_name=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/distiller.pt
+        wandb_project=${pretrain_model_name##*/}
         output_dir=${work_dir}/outputs/${wandb_project}/${model_name}/${exp_name}/
-        pretrain_model_name=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/hubert_base.ls960.pt
+        
         # pretrain_model_name=${output_dir}/checkpoints/checkpoint_36_25000.pt
 
         # set finetune data
@@ -304,7 +306,12 @@ if [ ${model_name} == "hubert" ]; then
         config_decode_dir=${work_dir}/examples/hubert/config/decode
 
         finetune_data_mode=100h
-        decode_output_dir=${output_dir}/finetune_${finetune_data_mode}/decode
+        decode_data_type=dev-clean
+        decode_data_path=/mnt/lustre/sjtu/home/xc915/superb/dataset/librispeech_finetuning_data/${decode_data_type}
+        # decode_model_path=/userhome/user/chenxie95/github/fairseq/outputs/hubert/pretrained_models/checkpoint_best.pt
+        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/hubert-finetune/hubert_finetune_distill_100h.pt
+
+        decode_output_dir=${work_dir}/outputs/${decode_model_path##*/}/${model_name}/${exp_name}/decode/${decode_data_type}
 
         # lexicon & ngram for hubert
         lexicon_file=/mnt/lustre/sjtu/home/xc915/superb/nlp_utils/lexicon/librispeech_lexicon.lst
@@ -312,11 +319,6 @@ if [ ${model_name} == "hubert" ]; then
 
         # use lm
         use_kenlm=true
-        decode_data_type=test-clean
-
-        decode_data_path=/mnt/lustre/sjtu/home/xc915/superb/dataset/librispeech_finetuning_data/${decode_data_type}
-        # decode_model_path=/userhome/user/chenxie95/github/fairseq/outputs/hubert/pretrained_models/checkpoint_best.pt
-        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/hubert_distill_rnn.pt
 
         if ${use_kenlm}; then
             cd ${code_dir} && python3 examples/speech_recognition/new/infer.py \

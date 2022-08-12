@@ -78,9 +78,9 @@ model:
   attention_dropout: 0.0
   feature_grad_mult: 0.0
   freeze_finetune_updates: 10000
-  use_rnn: True
+  use_rnn: False
   use_featurizer: True
-  encoder_layers: 12
+  encoder_layers: 2
 
 hydra:
   job:
