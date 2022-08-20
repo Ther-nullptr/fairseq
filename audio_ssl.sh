@@ -15,9 +15,6 @@ cd ${work_dir}
 # set time stamp
 timestamp=`date +%Y-%m-%d-%H-%M`
 
-# !important setup wandb project
-wandb_project=hubert_rnn_only
-
 # stage 1: pretrain
 # stage 2: finetune
 # stage 3: decode
@@ -28,7 +25,7 @@ model_name=hubert
 
 # set working dir and output dir names
 work_dir=/mnt/lustre/sjtu/home/xc915/superb/wyj-fairseq # or /home
-exp_name=libri960h_base
+exp_name=libri960h_base #! usually you don't need to edit it. 960h or 60kh 
 
 # directory where fairseq is installed
 # e.g. in my docker image, it is /espnet/tools/fairseq
@@ -42,7 +39,7 @@ log() {
 }
 
 # set compute resource
-distributed_world_size=1
+distributed_world_size=1 #! usually you don't need to edit it.
 update_freq=[2]
 
 output_dir=${work_dir}/outputs/${model_name}/${exp_name}
@@ -275,8 +272,8 @@ if [ ${model_name} == "hubert" ]; then
         config_finetune_name=base_100h
 
         # set pretrained model
-        pretrain_model_name=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/distiller.pt
-        wandb_project=${pretrain_model_name##*/}
+        pretrain_model_name=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/hubert_0_1_true.pt #! remember to edit it!
+        wandb_project=${pretrain_model_name##*/}_true_wo_rnn
         output_dir=${work_dir}/outputs/${wandb_project}/${model_name}/${exp_name}/
         
         # pretrain_model_name=${output_dir}/checkpoints/checkpoint_36_25000.pt
@@ -309,9 +306,10 @@ if [ ${model_name} == "hubert" ]; then
         decode_data_type=dev-clean
         decode_data_path=/mnt/lustre/sjtu/home/xc915/superb/dataset/librispeech_finetuning_data/${decode_data_type}
         # decode_model_path=/userhome/user/chenxie95/github/fairseq/outputs/hubert/pretrained_models/checkpoint_best.pt
-        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/hubert-finetune/hubert_finetune_distill_100h.pt
+        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/hubert-finetune/hubert_0_1_rnn.pt
+        utils=none
 
-        decode_output_dir=${work_dir}/outputs/${decode_model_path##*/}/${model_name}/${exp_name}/decode/${decode_data_type}
+        decode_output_dir=${work_dir}/outputs/${decode_model_path##*/}/${model_name}/${exp_name}/decode/${decode_data_type}/${utils}
 
         # lexicon & ngram for hubert
         lexicon_file=/mnt/lustre/sjtu/home/xc915/superb/nlp_utils/lexicon/librispeech_lexicon.lst
