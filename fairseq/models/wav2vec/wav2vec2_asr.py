@@ -189,7 +189,7 @@ class Wav2Vec2AsrConfig(FairseqDataclass):
 
     # about linear initialize
     linear_initialize: bool = field(default=False, metadata={"help": "whether to initalize the linear projection"})
-    linear_projection_path: str = field(default=None, metadata={"help": "linear projection path"})
+    linear_projection_path: str = field(default='', metadata={"help": "linear projection path"})
 
 
 @dataclass

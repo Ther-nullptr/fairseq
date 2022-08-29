@@ -155,7 +155,7 @@ class HubertAsrConfig(FairseqDataclass):
 
     # about linear initialize
     linear_initialize: bool = field(default=False, metadata={"help": "whether to initalize the linear projection"})
-    linear_projection_path: str = field(default=None, metadata={"help": "linear projection path"})
+    linear_projection_path: str = field(default='', metadata={"help": "linear projection path"})
 
 
 @dataclass
@@ -412,8 +412,8 @@ class HubertEncoder(FairseqEncoder):
         if self.linear_initialize:
             state_dict = torch.load(self.linear_projection_path)
             logger.info(f'load linear projection from {self.linear_projection_path}')
-            self.proj.weight = state_dict['linear.weight']
-            self.proj.bias = state_dict['linear.bias']
+            self.proj.weight = torch.nn.Parameter(state_dict['linear.weight'])
+            self.proj.bias = torch.nn.Parameter(state_dict['linear.bias'])
 
         if cfg.use_rnn:
             print('use rnn')

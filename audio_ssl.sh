@@ -18,7 +18,7 @@ timestamp=`date +%Y-%m-%d-%H-%M`
 # stage 1: pretrain
 # stage 2: finetune
 # stage 3: decode
-stage=3
+stage=2
 
 # model_name need to be [wav2vec|hubert|data2vec]
 model_name=hubert
@@ -273,7 +273,7 @@ if [ ${model_name} == "hubert" ]; then
 
         # set pretrained model
         pretrain_model_name=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/distill_hubert_finetune_fairseq.pt #! remember to edit it!
-        wandb_project=${pretrain_model_name##*/}
+        wandb_project=${pretrain_model_name##*/}_linear_init
         output_dir=${work_dir}/outputs/${wandb_project}/${model_name}/${exp_name}/
         
         # pretrain_model_name=${output_dir}/checkpoints/checkpoint_36_25000.pt
@@ -293,7 +293,8 @@ if [ ${model_name} == "hubert" ]; then
         model.w2v_path=${pretrain_model_name} \
         hydra.run.dir=${finetune_output_dir} \
         common.log_interval=10 \
-        common.wandb_project=${wandb_project}
+        common.wandb_project=${wandb_project} \
+        model.linear_projection_path=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/linear_projection/hubert_finetune_distill_linear.pt
     fi
 
     if [ ${stage} -eq 3 ]; then
