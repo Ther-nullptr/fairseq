@@ -153,6 +153,10 @@ class HubertAsrConfig(FairseqDataclass):
     # this holds the loaded hubert args
     w2v_args: Any = None
 
+    # about linear initialize
+    linear_initialize: bool = field(default=False, metadata={"help": "whether to initalize the linear projection"})
+    linear_projection_path: str = field(default=None, metadata={"help": "linear projection path"})
+
 
 @dataclass
 class HubertCtcConfig(HubertAsrConfig):
@@ -333,6 +337,8 @@ class HubertSeq2SeqModel(FairseqEncoderDecoderModel):
 class HubertEncoder(FairseqEncoder):
     def __init__(self, cfg: HubertAsrConfig, task):
         self.apply_mask = cfg.apply_mask
+        self.linear_initialize = cfg.linear_initialize
+        self.linear_projection_path = cfg.linear_projection_path
 
         arg_overrides = {
             "dropout": cfg.dropout,
@@ -402,6 +408,12 @@ class HubertEncoder(FairseqEncoder):
             self.proj = Linear(d, cfg.decoder_embed_dim)
         else:
             self.proj = None
+
+        if self.linear_initialize:
+            state_dict = torch.load(self.linear_projection_path)
+            logger.info(f'load linear projection from {self.linear_projection_path}')
+            self.proj.weight = state_dict['linear.weight']
+            self.proj.bias = state_dict['linear.bias']
 
         if cfg.use_rnn:
             print('use rnn')
