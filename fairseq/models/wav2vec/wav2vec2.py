@@ -1141,7 +1141,7 @@ class TransformerEncoder(nn.Module):
         r = None
         for i, layer in enumerate(self.layers):
             x, (z, lr) = layer(
-                x, self_attn_padding_mask=padding_mask, need_weights=False
+                x, self_attn_padding_mask=padding_mask, need_weights=True
             )
             if i >= min_layer:
                 layer_results.append((x, z, lr))
@@ -1244,11 +1244,12 @@ class ConformerEncoder(TransformerEncoder):
         r = None
         for i, layer in enumerate(self.layers):
             dropout_probability = np.random.random()
-            if not self.training or (dropout_probability > self.layerdrop):
+            if 1:
+            # if not self.training or (dropout_probability > self.layerdrop):
                 x, z = layer(
                     x,
                     self_attn_padding_mask=padding_mask,
-                    need_weights=False,
+                    need_weights=True,
                     position_emb=position_emb,
                 )
                 if tgt_layer is not None:
@@ -1337,7 +1338,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
         x: torch.Tensor,
         self_attn_mask: torch.Tensor = None,
         self_attn_padding_mask: torch.Tensor = None,
-        need_weights: bool = False,
+        need_weights: bool = True,
         att_args=None,
     ):
         """
@@ -1355,7 +1356,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
                     value=x,
                     key_padding_mask=self_attn_padding_mask,
                     attn_mask=self_attn_mask,
-                    need_weights=False,
+                    need_weights=need_weights,
                 )
                 x = self.dropout1(x)
                 x = residual + x
@@ -1376,7 +1377,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
                     key=x,
                     value=x,
                     key_padding_mask=self_attn_padding_mask,
-                    need_weights=False,
+                    need_weights=need_weights,
                 )
 
                 x = self.dropout1(x)
@@ -1406,7 +1407,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
                         value=x,
                         key_padding_mask=self_attn_padding_mask,
                         attn_mask=self_attn_mask,
-                        need_weights=False,
+                        need_weights=need_weights,
                     )
                     x = self.dropout1(x)
 
@@ -1437,7 +1438,7 @@ class TransformerSentenceEncoderLayer(nn.Module):
                         key=x,
                         value=x,
                         key_padding_mask=self_attn_padding_mask,
-                        need_weights=False,
+                        need_weights=need_weights,
                     )
                     x = self.dropout1(x)
 
