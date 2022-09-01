@@ -1,4 +1,4 @@
-## 工作流
+## workflow
 
 1. 在本地wsl上修改代码，每到一个milestone就commit一次。
 2. 分别向origin(SJTU Server)和server(THU Server)push。
