@@ -103,7 +103,7 @@ class BaseFairseqModel(nn.Module):
     def load_state_dict(
         self,
         state_dict,
-        strict=True,
+        strict=False,
         model_cfg: Optional[DictConfig] = None,
         args: Optional[Namespace] = None,
     ):
@@ -125,7 +125,7 @@ class BaseFairseqModel(nn.Module):
         from fairseq.checkpoint_utils import prune_state_dict
 
         new_state_dict = prune_state_dict(state_dict, model_cfg)
-        return super().load_state_dict(new_state_dict, strict)
+        return super().load_state_dict(new_state_dict, strict=False)
 
     def upgrade_state_dict(self, state_dict):
         """Upgrade old state dicts to work with newer code."""

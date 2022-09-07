@@ -211,7 +211,8 @@ class CoFiHubertModel(BaseFairseqModel, ModuleUtilsMixin):  # top module
             head_z=head_z,
             mlp_z=mlp_z,
             head_layer_z=head_layer_z,
-            hidden_z=hidden_z)
+            hidden_z=hidden_z
+        )
         sequence_output = encoder_outputs[0]
         pooled_output = self.pooler(sequence_output)
         return (sequence_output, pooled_output) + encoder_outputs[1:]

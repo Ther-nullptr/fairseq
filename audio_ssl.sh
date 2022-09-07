@@ -18,10 +18,10 @@ timestamp=`date +%Y-%m-%d-%H-%M`
 # stage 1: pretrain
 # stage 2: finetune
 # stage 3: decode
-stage=3
+stage=2
 
 # model_name need to be [wav2vec|hubert|data2vec]
-model_name=hubert
+model_name=data2vec
 
 # set working dir and output dir names
 work_dir=/mnt/lustre/sjtu/home/xc915/superb/wyj-fairseq # or /home
@@ -269,11 +269,11 @@ if [ ${model_name} == "hubert" ]; then
 
         # set finetune config
         config_finetune_dir=${work_dir}/examples/hubert/config/finetune
-        config_finetune_name=base_100h_like_data2vec
+        config_finetune_name=base_100h
 
         # set pretrained model
-        pretrain_model_name=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/hubert-finetune/hubert_0_1_w_data2vec_cfg.pt #! remember to edit it!
-        wandb_project=${pretrain_model_name##*/}_with_data2vec_decode
+        pretrain_model_name=/mnt/lustre/sjtu/home/xc915/superb/wyj-s3prl/s3prl/result/pretrain/distill_hubert_w_emb_prob_loss/fairseq_pretrain.pt #! remember to edit it!
+        wandb_project=distill_hubert_w_emb_prob_loss_${pretrain_model_name##*/}
         output_dir=${work_dir}/outputs/${wandb_project}/${model_name}/${exp_name}/
         
         # pretrain_model_name=${output_dir}/checkpoints/checkpoint_36_25000.pt
@@ -292,6 +292,7 @@ if [ ${model_name} == "hubert" ]; then
         task.label_dir=${finetune_data_path} \
         model.w2v_path=${pretrain_model_name} \
         hydra.run.dir=${finetune_output_dir} \
+        checkpoint.save_dir=${finetune_output_dir} \
         common.log_interval=10 \
         common.wandb_project=${wandb_project} \
         model.linear_projection_path=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/linear_projection/hubert_finetune_distill_linear.pt
@@ -307,7 +308,7 @@ if [ ${model_name} == "hubert" ]; then
         decode_data_type=test-clean
         decode_data_path=/mnt/lustre/sjtu/home/xc915/superb/dataset/librispeech_finetuning_data/${decode_data_type}
         # decode_model_path=/userhome/user/chenxie95/github/fairseq/outputs/hubert/pretrained_models/checkpoint_best.pt
-        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/hubert-finetune/hubert_finetune_distill_only_w_kldiv.pt
+        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/wyj-fairseq/outputs/distill_hubert_w_kldiv_only_fairseq_pretrain.pt/hubert/libri960h_base/finetune_100h/checkpoints/checkpoint_last.pt
         utils=true
 
         decode_output_dir=${work_dir}/outputs/${decode_model_path##*/}/${model_name}/${exp_name}/decode/${decode_data_type}/${utils}
@@ -319,6 +320,8 @@ if [ ${model_name} == "hubert" ]; then
         # use lm
         use_kenlm=false
 
+        wandb_project=decode_${decode_model_path##*/}_kldiv_only_${decode_data_type}_${use_kenlm}
+
         if ${use_kenlm}; then
             cd ${code_dir} && python3 examples/speech_recognition/new/infer.py \
             --config-dir ${config_decode_dir} \
@@ -329,6 +332,7 @@ if [ ${model_name} == "hubert" ]; then
             dataset.gen_subset=test \
             decoding.lexicon=${lexicon_file} \
             decoding.lmpath=${arpa_file} \
+            decoding.wandb_project=${wandb_project} \
             hydra.run.dir=${decode_output_dir}
         else
             cd ${code_dir} && python3 examples/speech_recognition/new/infer.py \
@@ -338,6 +342,7 @@ if [ ${model_name} == "hubert" ]; then
             task.normalize=false \
             common_eval.path=${decode_model_path} \
             dataset.gen_subset=test \
+            decoding.wandb_project=${wandb_project} \
             hydra.run.dir=${decode_output_dir}
         fi
     fi
@@ -408,8 +413,8 @@ if [ ${model_name} == "data2vec" ]; then
         config_finetune_name=base_100h
 
         # set pretrained model
-        pretrain_model_name=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/data2vec_0_1.pt
-        wandb_project=${pretrain_model_name##*/}
+        pretrain_model_name=/mnt/lustre/sjtu/home/xc915/superb/wyj-s3prl/s3prl/result/pretrain/distill_finetune_data2vec_w_all_loss/fairseq_pretrain.pt
+        wandb_project=distill_finetune_data2vec_w_all_loss_sota_${pretrain_model_name##*/}
         output_dir=${work_dir}/outputs/${wandb_project}/${model_name}/${exp_name}/
 
         # set finetune data
@@ -431,7 +436,8 @@ if [ ${model_name} == "data2vec" ]; then
         hydra.run.dir=${finetune_output_dir} \
         common.log_interval=10 \
         common.wandb_project=${wandb_project} \
-        distributed_training.distributed_world_size=1 
+        distributed_training.distributed_world_size=1 \
+        checkpoint.save_dir=${finetune_output_dir}
     fi
 
     if [ ${stage} -eq 3 ]; then
@@ -448,12 +454,13 @@ if [ ${model_name} == "data2vec" ]; then
         arpa_file=/mnt/lustre/sjtu/home/xc915/superb/nlp_utils/arpa/4-gram.mmap
 
         # use lm
-        use_kenlm=false
+        use_kenlm=true
         decode_data_type=test-clean
 
         decode_data_path=/mnt/lustre/sjtu/home/xc915/superb/dataset/librispeech_finetuning_data/${decode_data_type}
         # decode_model_path=/userhome/user/chenxie95/github/fairseq/outputs/hubert/pretrained_models/checkpoint_best.pt
-        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/upstream_model/hubert-finetune/hubert_finetune_distill_only_w_kldiv.pt
+        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/wyj-s3prl/s3prl/result/pretrain/distill_data2vec_w_kldiv_only/fairseq_finetune.pt
+        wandb_project=decode_${decode_model_path##*/}_${decode_data_type}_${use_kenlm}_data2vec_finetune_distill_w_kldiv_only
 
         if ${use_kenlm}; then
             cd ${code_dir} && python3 examples/speech_recognition/new/infer.py \
@@ -467,6 +474,7 @@ if [ ${model_name} == "data2vec" ]; then
             decoding.lmpath=${arpa_file} \
             decoding.unique_wer_file=True \
             decoding.beam=1500 \
+            decoding.wandb_project=${wandb_project} \
             hydra.run.dir=${decode_output_dir} \
             distributed_training.distributed_world_size=1
         else
@@ -476,6 +484,7 @@ if [ ${model_name} == "data2vec" ]; then
             task.data=${decode_data_path} \
             task.normalize=false \
             common_eval.path=${decode_model_path} \
+            decoding.wandb_project=${wandb_project} \
             dataset.gen_subset=test \
             hydra.run.dir=${decode_output_dir}
         fi

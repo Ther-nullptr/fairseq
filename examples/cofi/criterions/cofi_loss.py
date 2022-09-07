@@ -126,13 +126,17 @@ class CoFiCriterion(FairseqCriterion):
     def calculate_distillation_loss(self, model, teacher_outputs, student_outputs, zs):
         layer_loss = self.calculate_layer_distillation_loss(model, teacher_outputs, student_outputs, zs)
         distill_loss = layer_loss
+        prob_size = teacher_outputs[1].shape
+        teacher_logits = teacher_outputs[1]
+        student_logits = student_outputs[1]
+        teacher_logits = teacher_logits.view(prob_size[0] * prob_size[1], prob_size[2])
+        student_logits = student_logits.view(prob_size[0] * prob_size[1], prob_size[2])
         ce_distill_loss = F.kl_div(
             input=F.log_softmax(
-                student_outputs[1] / self.distill_temp, dim=-1), #! logits: [32,3]
+                student_logits / self.distill_temp, dim=-1), #! logits: [32,3]
             target=F.softmax(
-                teacher_outputs[1] / self.distill_temp, dim=-1), #! distill_temp: 2.0
+                teacher_logits / self.distill_temp, dim=-1), #! distill_temp: 2.0
             reduction="batchmean") * (self.distill_temp ** 2)
-
         loss = self.distill_ce_loss_alpha * ce_distill_loss
         if distill_loss is not None:
             loss += self.distill_loss_alpha * distill_loss

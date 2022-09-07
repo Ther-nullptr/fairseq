@@ -25,6 +25,7 @@ decoding:
   wordscore: -1
   silweight: 0
   unique_wer_file: true
+  wandb_project: ???
 common_eval:
   results_path: ???
   path: ???

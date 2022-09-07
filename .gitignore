@@ -150,3 +150,10 @@ tmp/
 
 prune/
 my_models/
+
+*.len
+*.npy
+kmeans
+
+None/
+examples/hubert/output/
