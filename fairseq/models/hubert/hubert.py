@@ -248,6 +248,7 @@ class HubertModel(BaseFairseqModel):
     ) -> None:
         super().__init__()
         logger.info(f"HubertModel Config: {cfg}")
+        logger.info(f"dictionaries: {dictionaries}")
 
         feature_enc_layers = eval(cfg.conv_feature_layers)  # noqa
         self.embed = feature_enc_layers[-1][0]

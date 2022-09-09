@@ -4,6 +4,7 @@
 # the root directory of this source tree. An additional grant of patent rights
 # can be found in the PATENTS file in the same directory.
 
+import logging
 import math
 from argparse import Namespace
 from dataclasses import dataclass, field
@@ -19,6 +20,7 @@ from fairseq.data.data_utils import post_process
 from fairseq.tasks import FairseqTask
 from fairseq.logging.meters import safe_round
 
+logger = logging.getLogger(__name__)
 
 @dataclass
 class CtcCriterionConfig(FairseqDataclass):
@@ -207,6 +209,8 @@ class CtcCriterion(FairseqCriterion):
 
                     if decoded is not None and "words" in decoded:
                         pred_words = decoded["words"]
+                        logger.info(f'pred words: {pred_words}')
+                        logger.info(f'targ words: {targ_words}')
                         w_errs += editdistance.eval(pred_words, targ_words)
                         wv_errs += editdistance.eval(pred_words_raw, targ_words)
                     else:
