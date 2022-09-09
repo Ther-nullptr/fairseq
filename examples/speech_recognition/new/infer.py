@@ -40,6 +40,8 @@ from omegaconf import OmegaConf
 import hydra
 from hydra.core.config_store import ConfigStore
 
+import wandb
+
 logging.root.setLevel(logging.INFO)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -58,6 +60,10 @@ class DecodingConfig(DecoderConfig, FlashlightDecoderConfig):
         metadata={
             "help": "If set, write hypothesis and reference sentences into this directory"
         },
+    )
+    wandb_project: Optional[str] = field(
+        default=None,
+        metadata={"help": "wandb project for record the wer"},
     )
 
 
@@ -122,6 +128,10 @@ class InferenceProcessor:
         self.ref_units_file = None
 
         self.progress_bar = self.build_progress_bar()
+
+        self.wandb_project = self.cfg.decoding.wandb_project
+        if(self.wandb_project != None):
+            wandb.init(project=self.wandb_project)
 
     def __enter__(self) -> "InferenceProcessor":
         if self.cfg.decoding.results_path is not None:
@@ -294,11 +304,16 @@ class InferenceProcessor:
         if not self.cfg.common_eval.quiet:
             logger.info(f"HYPO: {hyp_words}")
             logger.info(f"REF: {tgt_words}")
-            logger.info("---------------------")
 
         hyp_words, tgt_words = hyp_words.split(), tgt_words.split()
+        wrong = editdistance.eval(hyp_words, tgt_words)
+        wer = float(wrong)/len(tgt_words)
 
-        return editdistance.eval(hyp_words, tgt_words), len(tgt_words)
+        if not self.cfg.common_eval.quiet:
+            logger.info(f"----------{wer}----------")
+            wandb.log({'single_wer': wer})
+
+        return wrong, len(tgt_words)
 
     def process_sample(self, sample: Dict[str, Any]) -> None:
         self.gen_timer.start()
@@ -320,6 +335,7 @@ class InferenceProcessor:
             )
             self.total_errors += errs
             self.total_length += length
+            wandb.log({'accumulative_wer':float(self.total_errors)/self.total_length})
 
         self.log({"wps": round(self.wps_meter.avg)})
         if "nsentences" in sample:
@@ -443,6 +459,7 @@ def hydra_main(cfg: InferConfig) -> Union[float, Tuple[float, Optional[float]]]:
             logger.error("Crashed! %s", str(e))
 
     logger.info("Word error rate: %.4f", wer)
+    wandb.log({"final_wer":wer})
     if cfg.is_ax:
         return wer, None
 

@@ -235,13 +235,13 @@ class CoFiHubertForASR(nn.Module):
     def __init__(self, cfg: CoFiHubertConfig):
         super().__init__()
         self.w2v_model = CoFiHubertModel(cfg)
-        self.proj = CoFiLinear(cfg.hidden_size, cfg.vocab_size)
+        self.proj = CoFiLinear(cfg.hidden_size, 32)
         self.layer_transformation = nn.Linear(cfg.hidden_size, cfg.hidden_size)
 
     def forward(self, inputs):
         loss = None
         last_hidden_state, pooled_output, hidden_states, attentions = self.w2v_model(**inputs)
-        result = self.proj(pooled_output)
+        result = self.proj(last_hidden_state)
         return (loss, result, hidden_states, attentions)
 
 

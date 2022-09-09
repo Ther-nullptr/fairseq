@@ -381,12 +381,14 @@ class HubertModel(BaseFairseqModel):
         neg_is_pos = (pos == negs).all(-1)
         pos = pos.unsqueeze(0)
         targets = torch.cat([pos, negs], dim=0)
+        print(f'targets:{targets.shape}')
 
         logits = torch.cosine_similarity(x.float(), targets.float(), dim=-1).type_as(x)
         logits /= self.logit_temp
         if neg_is_pos.any():
             logits[1:][neg_is_pos] = float("-inf")
         logits = logits.transpose(0, 1)  # (num_x, num_cls+1)
+        print(f'logits:{logits.shape}')
         return logits
 
     def forward_features(self, source: torch.Tensor) -> torch.Tensor:
@@ -436,16 +438,13 @@ class HubertModel(BaseFairseqModel):
         output_layer: Optional[int] = None,
     ) -> Dict[str, torch.Tensor]:
         """output layer is 1-based"""
-        # logger.info(f"initial shape:{source.shape}")
         features = self.forward_features(source)
-        # logger.info(f"feature extractor:{features.shape}")
         if target_list is not None:
             features, target_list = self.forward_targets(features, target_list)
 
         features_pen = features.float().pow(2).mean()
 
         features = features.transpose(1, 2)
-        # logger.info(f"feature after transpose:{features.shape}")
         features = self.layer_norm(features)
         unmasked_features = features.clone()
 
@@ -475,7 +474,6 @@ class HubertModel(BaseFairseqModel):
             padding_mask=padding_mask,
             layer=None if output_layer is None else output_layer - 1,
         )
-        # logger.info(f"encoder output:{x.shape}")
 
         if features_only:
             return {"x": x, "padding_mask": padding_mask, "features": features, "layer_results": layer_results}
@@ -493,14 +491,18 @@ class HubertModel(BaseFairseqModel):
             return self.compute_nce(proj_x, y, negs)
 
         label_embs_list = self.label_embs_concat.split(self.num_classes, 0)
+        print(f'target_list:{target_list}')
 
         if not self.skip_masked:
             masked_indices = torch.logical_and(~padding_mask, mask_indices)
             proj_x_m = self.final_proj(x[masked_indices])
+            print(f'proj_x_m:{proj_x_m.shape}')
             if self.untie_final_proj:
                 proj_x_m_list = proj_x_m.chunk(len(target_list), dim=-1)
             else:
                 proj_x_m_list = [proj_x_m for _ in range(len(target_list))]
+            print(f'proj_x_m_list:{len(proj_x_m_list), proj_x_m_list[0].shape}')
+            
             logit_m_list = [
                 compute_pred(proj_x_m, t[masked_indices], label_embs_list[i])
                 for i, (proj_x_m, t) in enumerate(zip(proj_x_m_list, target_list))
@@ -511,10 +513,12 @@ class HubertModel(BaseFairseqModel):
         if not self.skip_nomask:
             nomask_indices = torch.logical_and(~padding_mask, ~mask_indices)
             proj_x_u = self.final_proj(x[nomask_indices])
+            print(f'proj_x_u:{proj_x_u.shape}')
             if self.untie_final_proj:
                 proj_x_u_list = proj_x_u.chunk(len(target_list), dim=-1)
             else:
                 proj_x_u_list = [proj_x_u for _ in range(len(target_list))]
+            print(f'proj_x_u_list:{len(proj_x_u_list), proj_x_u_list[0].shape}')
 
             logit_u_list = [
                 compute_pred(proj_x_u, t[nomask_indices], label_embs_list[i])
@@ -522,6 +526,9 @@ class HubertModel(BaseFairseqModel):
             ]
         else:
             logit_u_list = [None for _ in target_list]
+
+        print(f"logit_m_list:{len(logit_m_list)}")
+        print(f"logit_u_list:{len(logit_u_list)}")
 
         result = {
             "logit_m_list": logit_m_list,

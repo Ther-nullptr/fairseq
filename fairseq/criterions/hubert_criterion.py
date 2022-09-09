@@ -67,6 +67,8 @@ class HubertCriterion(FairseqCriterion):
         loss_m_list = []
         logp_m_list = model.get_logits(net_output, True)
         targ_m_list = model.get_targets(net_output, True)
+        print(f'targ_m_list:{targ_m_list}')
+        print(f'logp_m_list, targ_m_list:{logp_m_list[0].shape}, {targ_m_list[0].shape}')
         assert self.pred_masked_weight == 0 or len(logp_m_list) > 0
         for i, (logp_m, targ_m) in enumerate(zip(logp_m_list, targ_m_list)):
             loss_m = F.cross_entropy(logp_m, targ_m, reduction=reduction)

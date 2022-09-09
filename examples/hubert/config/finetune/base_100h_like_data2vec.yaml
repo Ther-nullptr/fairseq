@@ -44,7 +44,7 @@ criterion:
 
 optimization:
   max_update: 80000
-  lr: [2e-5]
+  lr: [0.00003]
   sentence_avg: true
   update_freq: [1]
 
@@ -55,9 +55,7 @@ optimizer:
 
 lr_scheduler:
   _name: tri_stage
-  warmup_steps: 8000
-  hold_steps: 0
-  decay_steps: 72000
+  phase_ratio: [0.1, 0.4, 0.5]
   final_lr_scale: 0.05
 
 model:
@@ -77,7 +75,7 @@ model:
   activation_dropout: 0.1
   attention_dropout: 0.0
   feature_grad_mult: 0.0
-  freeze_finetune_updates: 10000
+  freeze_finetune_updates: 0
   use_rnn: False
   use_featurizer: False
   encoder_layers: 2

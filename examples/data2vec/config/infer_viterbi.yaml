@@ -18,6 +18,7 @@ task:
 decoding:
   type: viterbi
   unique_wer_file: true
+  wandb_project: ???
 common_eval:
   results_path: ???
   path: ???
