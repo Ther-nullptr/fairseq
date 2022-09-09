@@ -1,7 +1,7 @@
 # @package _group_
 
 common:
-  fp16: false
+  fp16: true
   log_format: json
   log_interval: 200
   tensorboard_logdir: tblog

@@ -21,7 +21,7 @@ timestamp=`date +%Y-%m-%d-%H-%M`
 stage=2
 
 # model_name need to be [wav2vec|hubert|data2vec]
-model_name=data2vec
+model_name=hubert
 
 # set working dir and output dir names
 work_dir=/mnt/lustre/sjtu/home/xc915/superb/wyj-fairseq # or /home
@@ -272,8 +272,8 @@ if [ ${model_name} == "hubert" ]; then
         config_finetune_name=base_100h
 
         # set pretrained model
-        pretrain_model_name=/mnt/lustre/sjtu/home/xc915/superb/wyj-s3prl/s3prl/result/pretrain/distill_hubert_w_emb_prob_loss/fairseq_pretrain.pt #! remember to edit it!
-        wandb_project=distill_hubert_w_emb_prob_loss_${pretrain_model_name##*/}
+        pretrain_model_name=/mnt/lustre/sjtu/home/xc915/superb/wyj-s3prl/s3prl/result/pretrain/distill_fithubert_normal/fairseq-pretrain.pt
+        wandb_project=distill_fithubert_normal_finetune
         output_dir=${work_dir}/outputs/${wandb_project}/${model_name}/${exp_name}/
         
         # pretrain_model_name=${output_dir}/checkpoints/checkpoint_36_25000.pt
@@ -308,7 +308,7 @@ if [ ${model_name} == "hubert" ]; then
         decode_data_type=test-clean
         decode_data_path=/mnt/lustre/sjtu/home/xc915/superb/dataset/librispeech_finetuning_data/${decode_data_type}
         # decode_model_path=/userhome/user/chenxie95/github/fairseq/outputs/hubert/pretrained_models/checkpoint_best.pt
-        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/wyj-fairseq/outputs/distill_hubert_w_kldiv_only_fairseq_pretrain.pt/hubert/libri960h_base/finetune_100h/checkpoints/checkpoint_last.pt
+        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/wyj-fairseq/outputs/distill_hubert_w_emb_loss_type2/hubert/libri960h_base/finetune_100h/checkpoint_best.pt
         utils=true
 
         decode_output_dir=${work_dir}/outputs/${decode_model_path##*/}/${model_name}/${exp_name}/decode/${decode_data_type}/${utils}
@@ -318,9 +318,9 @@ if [ ${model_name} == "hubert" ]; then
         arpa_file=/mnt/lustre/sjtu/home/xc915/superb/nlp_utils/arpa/4-gram.mmap
 
         # use lm
-        use_kenlm=false
+        use_kenlm=true
 
-        wandb_project=decode_${decode_model_path##*/}_kldiv_only_${decode_data_type}_${use_kenlm}
+        wandb_project=decode_distill_hubert_w_emb_loss_types
 
         if ${use_kenlm}; then
             cd ${code_dir} && python3 examples/speech_recognition/new/infer.py \
@@ -459,8 +459,8 @@ if [ ${model_name} == "data2vec" ]; then
 
         decode_data_path=/mnt/lustre/sjtu/home/xc915/superb/dataset/librispeech_finetuning_data/${decode_data_type}
         # decode_model_path=/userhome/user/chenxie95/github/fairseq/outputs/hubert/pretrained_models/checkpoint_best.pt
-        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/wyj-s3prl/s3prl/result/pretrain/distill_data2vec_w_kldiv_only/fairseq_finetune.pt
-        wandb_project=decode_${decode_model_path##*/}_${decode_data_type}_${use_kenlm}_data2vec_finetune_distill_w_kldiv_only
+        decode_model_path=/mnt/lustre/sjtu/home/xc915/superb/wyj-fairseq/outputs/distill_finetune_data2vec_w_all_loss_sota_fairseq_pretrain.pt/data2vec/libri960h_base/finetune_100h_new/checkpoint_best.pt
+        wandb_project=decode_${decode_model_path##*/}_${decode_data_type}_${use_kenlm}_data2vec_finetune_distill_w_kldiv_only_finetune
 
         if ${use_kenlm}; then
             cd ${code_dir} && python3 examples/speech_recognition/new/infer.py \

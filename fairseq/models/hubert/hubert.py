@@ -377,7 +377,6 @@ class HubertModel(BaseFairseqModel):
         return x, mask_indices
 
     def compute_nce(self, x, pos, negs):
-        print(f'x:{x.shape}')
         neg_is_pos = (pos == negs).all(-1)
         pos = pos.unsqueeze(0)
         targets = torch.cat([pos, negs], dim=0)
@@ -480,7 +479,6 @@ class HubertModel(BaseFairseqModel):
 
         def compute_pred(proj_x, target, label_embs):
             # compute logits for the i-th label set
-            print(f'proj_x, target, label_embs: {proj_x.shape}, {target.shape}, {label_embs.shape}')
             y = torch.index_select(label_embs, 0, target.long())
             negs = label_embs.unsqueeze(1).expand(-1, proj_x.size(0), -1)
             if self.target_glu:
@@ -489,7 +487,6 @@ class HubertModel(BaseFairseqModel):
             # proj_x: (S, D)
             # y: (S, D)
             # negs: (Neg, S, D)
-            print(f'proj_x, y, negs:{proj_x.shape},{y.shape},{negs.shape}')
             return self.compute_nce(proj_x, y, negs)
 
         label_embs_list = self.label_embs_concat.split(self.num_classes, 0)
